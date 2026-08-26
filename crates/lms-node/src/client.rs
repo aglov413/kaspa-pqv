@@ -177,6 +177,48 @@ impl NodeClient {
         Ok(id.to_string())
     }
 
+    /// Report what the node is running and how far along the chain it is.
+    ///
+    /// Which script features are live is a property of the deployed network,
+    /// not of this source checkout, so it is asked rather than assumed.
+    pub async fn report_server_info(&self) -> Result<()> {
+        let info = self
+            .rpc
+            .get_server_info()
+            .await
+            .map_err(|e| anyhow!("get_server_info failed: {e}"))?;
+        println!("  server version    {}", info.server_version);
+        println!("  network           {}", info.network_id);
+        println!("  synced            {}", info.is_synced);
+        println!("  utxo-indexed      {}", info.has_utxo_index);
+        println!("  virtual DAA score {}", info.virtual_daa_score);
+
+        let dag = self
+            .rpc
+            .get_block_dag_info()
+            .await
+            .map_err(|e| anyhow!("get_block_dag_info failed: {e}"))?;
+        println!("  pruning point     {}", dag.pruning_point_hash);
+        println!("  tips              {}", dag.tip_hashes.len());
+
+        // Whether the Toccata script features are live is decided by what the
+        // network actually carries, not by what this checkout compiles. v1
+        // transactions are the ones with a `compute_budget` field, which the
+        // vault verifier needs.
+        let Some(tip) = dag.tip_hashes.first().copied() else { return Ok(()) };
+        let block = self
+            .rpc
+            .get_block(tip, true)
+            .await
+            .map_err(|e| anyhow!("get_block failed: {e}"))?;
+        let mut versions: std::collections::BTreeMap<u16, usize> = Default::default();
+        for tx in &block.transactions {
+            *versions.entry(tx.version).or_default() += 1;
+        }
+        println!("  tip block tx versions {versions:?}");
+        Ok(())
+    }
+
     pub async fn disconnect(&self) -> Result<()> {
         self.rpc.disconnect().await.map_err(|e| anyhow!("disconnect failed: {e}"))
     }
