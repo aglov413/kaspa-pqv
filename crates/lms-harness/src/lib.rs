@@ -85,3 +85,44 @@ pub fn execute_with_tx(
     vm.execute().map_err(|e| anyhow!("script failed: {e}"))?;
     Ok(Cost { script_bytes: script.len(), script_units: vm.used_script_units().0 })
 }
+
+/// Execute in transaction context **with the input's declared compute budget
+/// enforced**, as a node does.
+///
+/// [`execute_with_tx`] uses the engine's default limit of `u64::MAX`, which
+/// reports what a script consumed but never refuses it. That is the right tool
+/// for asking "what does this cost"; it is the wrong tool for asking "can this
+/// be mined", because a transaction that under-declares its budget is rejected
+/// by consensus while passing there.
+///
+/// The budget is in compute-budget units, the same field
+/// `TransactionInput::new_with_compute_budget` takes, and one unit buys
+/// `SCRIPT_UNITS_PER_COMPUTE_BUDGET_UNIT` script units.
+pub fn execute_with_tx_budget(
+    script: &[u8],
+    tx: &kaspa_consensus_core::tx::Transaction,
+    utxos: Vec<kaspa_consensus_core::tx::UtxoEntry>,
+    input_index: usize,
+    budget_units: u16,
+) -> Result<Cost> {
+    use kaspa_consensus_core::mass::{ComputeBudget, ScriptUnits};
+    use kaspa_txscript::EngineCtx;
+
+    let reused = SigHashReusedValuesUnsync::new();
+    let sig_cache: Cache<SigCacheKey, bool> = Cache::new(0);
+    let populated = PopulatedTransaction::new(tx, utxos.clone());
+    let limit: ScriptUnits = ComputeBudget(budget_units).into();
+
+    let mut vm = TxScriptEngine::from_transaction_input_with_script_units_limit(
+        &populated,
+        &populated.tx.inputs[input_index],
+        input_index,
+        &utxos[input_index],
+        EngineCtx::new(&sig_cache).with_reused(&reused),
+        Default::default(),
+        limit,
+    );
+
+    vm.execute().map_err(|e| anyhow!("script failed: {e}"))?;
+    Ok(Cost { script_bytes: script.len(), script_units: vm.used_script_units().0 })
+}

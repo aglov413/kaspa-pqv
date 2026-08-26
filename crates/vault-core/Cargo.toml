@@ -1,12 +1,11 @@
 [package]
-name = "lms-script"
+name = "vault-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Generates a fully unrolled Kaspa txscript verifier for LMS/LM-OTS signatures."
+description = "Scheme-independent vault primitives: the binding digest and the script writer."
 
 [dependencies]
 kaspa-txscript.workspace = true
-vault-core.workspace = true
 anyhow.workspace = true
 sha2.workspace = true

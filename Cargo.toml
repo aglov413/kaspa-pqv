@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lms-script", "crates/lms-harness", "crates/lms-wallet", "crates/lms-node", "crates/lms-cli"]
+members = ["crates/vault-core", "crates/lms-script", "crates/slh-script", "crates/lms-harness", "crates/lms-wallet", "crates/lms-node", "crates/lms-cli"]
 
 [workspace.package]
 edition = "2021"
@@ -26,7 +26,10 @@ kaspa-addresses = { path = "../L1-logic/rusty-kaspa/crypto/addresses" }
 kaspa-wrpc-client = { path = "../L1-logic/rusty-kaspa/rpc/wrpc/client" }
 kaspa-rpc-core = { path = "../L1-logic/rusty-kaspa/rpc/core" }
 
+vault-core = { path = "crates/vault-core" }
 lms-script = { path = "crates/lms-script" }
+slh-script = { path = "crates/slh-script" }
+lms-harness = { path = "crates/lms-harness" }
 lms-wallet = { path = "crates/lms-wallet" }
 lms-node = { path = "crates/lms-node" }
 

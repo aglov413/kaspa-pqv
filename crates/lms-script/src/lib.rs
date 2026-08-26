@@ -15,14 +15,21 @@
 //! It also relies on `OpSubstr`, `OpDiv`, `OpMod` and `OpBin2Num`, which Kaspa
 //! enables and Bitcoin disables.
 
-pub mod binding;
-pub mod builder;
 pub mod ots;
 pub mod params;
 pub mod verify;
 
-pub use builder::ScriptWriter;
+
 pub use ots::{coef, cksm, coefficient_source};
-pub use binding::{binding_digest, binding_preimage, emit_binding_digest, OutputView, SpendView};
+
 pub use params::LmsParams;
 pub use verify::{emit_vault_script, emit_verify, LmsPublicKey};
+
+// `binding` and `builder` moved to `vault-core` when the SLH-DSA scheme was
+// added: one binding-digest implementation, not one per scheme. Re-exported
+// here so existing call sites (`lms_script::binding::…`, `ScriptWriter`) keep
+// working unchanged.
+pub use vault_core::{binding, builder};
+pub use vault_core::{
+    binding_digest, binding_preimage, emit_binding_digest, OutputView, ScriptWriter, SpendView,
+};

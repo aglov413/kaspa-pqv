@@ -1,0 +1,25 @@
+[package]
+name = "slh-script"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Generates a fully unrolled Kaspa txscript verifier for SLH-DSA-SHA2-128s signatures (FIPS 205)."
+
+[dependencies]
+kaspa-txscript.workspace = true
+vault-core.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+vault-core.workspace = true
+lms-harness.workspace = true
+kaspa-consensus-core.workspace = true
+lms-script.workspace = true
+lms-wallet.workspace = true
+kaspa-txscript.workspace = true
+fips205 = { version = "0.4.1", features = ["slh_dsa_sha2_128s"] }
+rand_core = "0.6"
+kaspa-bip32.workspace = true
+hex.workspace = true
