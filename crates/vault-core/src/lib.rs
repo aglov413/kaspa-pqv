@@ -13,14 +13,25 @@
 //! [`builder`] is here because it is trivial and shared — every emitter wants
 //! the same thin wrapper over Kaspa's own `ScriptBuilder`.
 //!
+//! [`derivation`] and [`key_material`] are here for a third reason: the vault
+//! path is `m/purpose'/coin'/scheme'/account'/index'`, and the `scheme'` level
+//! is what keeps two schemes derived from one mnemonic apart. That level only
+//! means anything if both schemes read it from the same table.
+//!
 //! Nothing scheme-specific belongs in this crate. LMS parameters live in
 //! `lms-script`, SLH-DSA parameters in `slh-script`.
 
 pub mod binding;
 pub mod builder;
+pub mod derivation;
+pub mod key_material;
+pub mod preflight;
 
 pub use binding::{
     binding_digest, binding_preimage, emit_binding_digest, spk_wire_bytes, OutputView, SpendView,
     MAX_AMOUNT, MAX_OUTPOINT_INDEX, MAX_OUTPUT_COUNT, MAX_SPK_LEN, MAX_TX_VERSION,
 };
 pub use builder::ScriptWriter;
+pub use derivation::{derive_xi, vault_path, Derivation, Scheme, COIN_TYPE, PURPOSE, XI_DOMAIN};
+pub use key_material::KeyMaterial;
+pub use preflight::{PreflightReport, SpendShape, DUST_THRESHOLD};

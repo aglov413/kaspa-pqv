@@ -1,17 +1,22 @@
 [package]
-name = "vault-core"
+name = "slh-wallet"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Scheme-independent vault primitives: the binding digest and the script writer."
+description = "Key derivation, addresses and spending for Kaspa SLH-DSA post-quantum vaults."
 
 [dependencies]
+slh-script.workspace = true
+vault-core.workspace = true
 kaspa-txscript.workspace = true
-kaspa-bip32.workspace = true
 kaspa-consensus-core.workspace = true
 kaspa-addresses.workspace = true
+fips205.workspace = true
+rand_core = "0.6"
 anyhow.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+kaspa-bip32.workspace = true
+lms-harness.workspace = true
 hex.workspace = true

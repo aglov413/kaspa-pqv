@@ -17,10 +17,14 @@
 //! than before it.
 
 mod env;
+mod slh_cmd;
 mod spend_cmd;
 
 use anyhow::{bail, ensure, Context, Result};
-use env::{EnvFile, ENV_KEY, ENV_KEY_INDEX, ENV_MNEMONIC, ENV_NETWORK, ENV_TEMPLATE};
+use env::{
+    EnvFile, ENV_KEY, ENV_KEY_INDEX, ENV_KEY_SLH, ENV_MNEMONIC, ENV_MNEMONIC_SLH, ENV_NETWORK,
+    ENV_TEMPLATE,
+};
 use kaspa_addresses::Prefix;
 use lms_node::NodeClient;
 use lms_wallet::derivation::{vault_path, Derivation, Scheme};
@@ -29,20 +33,20 @@ use lms_wallet::vault::{Vault, LEAF_WARNING_THRESHOLD, PARAMS};
 
 const DEFAULT_ADDRESS_COUNT: u32 = 8;
 
-struct Args {
-    command: String,
-    mnemonic: Option<String>,
-    key: Option<String>,
-    key_index: Option<u32>,
-    count: u32,
-    network: Option<String>,
-    env_file: Option<String>,
-    to: Option<String>,
-    amount: Option<u64>,
-    fee: Option<u64>,
-    journal: Option<String>,
-    yes: bool,
-    dry_run: bool,
+pub struct Args {
+    pub command: String,
+    pub mnemonic: Option<String>,
+    pub key: Option<String>,
+    pub key_index: Option<u32>,
+    pub count: u32,
+    pub network: Option<String>,
+    pub env_file: Option<String>,
+    pub to: Option<String>,
+    pub amount: Option<u64>,
+    pub fee: Option<u64>,
+    pub journal: Option<String>,
+    pub yes: bool,
+    pub dry_run: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -95,29 +99,46 @@ fn prefix_for(network: &str) -> Result<Prefix> {
 }
 
 /// Everything a command needs, after flags, environment and `.env` are merged.
-struct Resolved {
-    material: KeyMaterial,
-    origin: String,
-    key_index: u32,
-    network: String,
+pub struct Resolved {
+    pub material: KeyMaterial,
+    pub origin: String,
+    pub key_index: u32,
+    pub network: String,
+}
+
+/// Which environment variables hold key material for a scheme.
+///
+/// A scheme-specific variable wins if it is set; otherwise both schemes fall
+/// back to the shared pair, which is the intended production shape — one
+/// mnemonic, one backup, every scheme derived from it.
+fn key_vars(scheme: Scheme, env: &EnvFile) -> (&'static str, &'static str) {
+    match scheme {
+        Scheme::SlhDsaSha2_128s
+            if env.get(ENV_MNEMONIC_SLH).is_some() || env.get(ENV_KEY_SLH).is_some() =>
+        {
+            (ENV_MNEMONIC_SLH, ENV_KEY_SLH)
+        }
+        _ => (ENV_MNEMONIC, ENV_KEY),
+    }
 }
 
 /// Merge the three sources. A flag always wins; the file never overrides
 /// something set deliberately in the environment.
-fn resolve(args: &Args, env: &EnvFile) -> Result<Resolved> {
-    let mnemonic = args.mnemonic.clone().or_else(|| env.get(ENV_MNEMONIC));
-    let key = args.key.clone().or_else(|| env.get(ENV_KEY));
+fn resolve(args: &Args, env: &EnvFile, scheme: Scheme) -> Result<Resolved> {
+    let (env_mnemonic, env_key) = key_vars(scheme, env);
+    let mnemonic = args.mnemonic.clone().or_else(|| env.get(env_mnemonic));
+    let key = args.key.clone().or_else(|| env.get(env_key));
 
     let (material, origin) = match (mnemonic, key) {
         (Some(_), Some(_)) => bail!(
             "both a mnemonic and a key were supplied. Give exactly one, and check \
-             {ENV_MNEMONIC} / {ENV_KEY} if you did not pass both on the command line."
+             {env_mnemonic} / {env_key} if you did not pass both on the command line."
         ),
         (Some(words), None) => {
             let origin = if args.mnemonic.is_some() {
                 "--mnemonic".to_string()
             } else {
-                format!("{ENV_MNEMONIC} ({})", env.source_of(ENV_MNEMONIC).unwrap_or("environment"))
+                format!("{env_mnemonic} ({})", env.source_of(env_mnemonic).unwrap_or("environment"))
             };
             (KeyMaterial::from_mnemonic(&words)?, origin)
         }
@@ -125,13 +146,13 @@ fn resolve(args: &Args, env: &EnvFile) -> Result<Resolved> {
             let origin = if args.key.is_some() {
                 "--key".to_string()
             } else {
-                format!("{ENV_KEY} ({})", env.source_of(ENV_KEY).unwrap_or("environment"))
+                format!("{env_key} ({})", env.source_of(env_key).unwrap_or("environment"))
             };
             (KeyMaterial::parse(&k)?, origin)
         }
         (None, None) => bail!(
-            "no key supplied. Pass --mnemonic or --key, or set {ENV_MNEMONIC} / \
-             {ENV_KEY} in a .env file (run `kaspa-vault init-env` to create one)."
+            "no key supplied. Pass --mnemonic or --key, or set {env_mnemonic} / \
+             {env_key} in a .env file (run `kaspa-vault init-env` to create one)."
         ),
     };
 
@@ -197,7 +218,7 @@ fn cmd_info() {
 }
 
 fn cmd_addresses(args: &Args, env: &EnvFile) -> Result<()> {
-    let resolved = resolve(args, env)?;
+    let resolved = resolve(args, env, Scheme::LmsSha256)?;
     let vault = open_vault(&resolved)?;
     let prefix = prefix_for(&resolved.network)?;
 
@@ -209,7 +230,7 @@ fn cmd_addresses(args: &Args, env: &EnvFile) -> Result<()> {
 }
 
 async fn cmd_balance(args: &Args, env: &EnvFile) -> Result<()> {
-    let resolved = resolve(args, env)?;
+    let resolved = resolve(args, env, Scheme::LmsSha256)?;
     let vault = open_vault(&resolved)?;
     let prefix = prefix_for(&resolved.network)?;
 
@@ -278,7 +299,7 @@ fn cmd_init_env(path: &str) -> Result<()> {
 async fn cmd_spend(args: &Args, env: &EnvFile) -> Result<()> {
     use kaspa_consensus_core::config::params::{MAINNET_PARAMS, TESTNET_PARAMS};
 
-    let resolved = resolve(args, env)?;
+    let resolved = resolve(args, env, Scheme::LmsSha256)?;
     let prefix = prefix_for(&resolved.network)?;
 
     let destination: kaspa_addresses::Address =
@@ -336,7 +357,10 @@ fn usage() {
     eprintln!("kaspa-vault <command> [options]");
     eprintln!();
     eprintln!("commands:");
-    eprintln!("  info                    scheme and parameter summary");
+    eprintln!("  info                    scheme and parameter summary
+  slh-address             SLH-DSA vault address (stateless scheme)
+  slh-balance             what the SLH-DSA vault holds
+  slh-spend               spend from the SLH-DSA vault");
     eprintln!("  init-env                write a .env template (mode 600)");
     eprintln!("  addresses               derive vault addresses");
     eprintln!("  balance                 query balances via the public node network");
@@ -380,6 +404,21 @@ async fn main() -> Result<()> {
         "addresses" => cmd_addresses(&args, &env)?,
         "balance" => cmd_balance(&args, &env).await?,
         "spend" => cmd_spend(&args, &env).await?,
+        "slh-address" => {
+            let resolved = resolve(&args, &env, Scheme::SlhDsaSha2_128s)?;
+            let prefix = prefix_for(&resolved.network)?;
+            slh_cmd::cmd_address(&resolved, prefix)?
+        }
+        "slh-balance" => {
+            let resolved = resolve(&args, &env, Scheme::SlhDsaSha2_128s)?;
+            let prefix = prefix_for(&resolved.network)?;
+            slh_cmd::cmd_balance(&resolved, prefix).await?
+        }
+        "slh-spend" => {
+            let resolved = resolve(&args, &env, Scheme::SlhDsaSha2_128s)?;
+            let prefix = prefix_for(&resolved.network)?;
+            slh_cmd::cmd_spend(&args, &resolved, prefix).await?
+        }
         "help" | "--help" | "-h" => usage(),
         other => {
             eprintln!("unknown command: {other}");

@@ -7,6 +7,8 @@ description = "Command-line wallet for Kaspa post-quantum LMS vaults."
 
 [dependencies]
 lms-wallet.workspace = true
+slh-wallet.workspace = true
+vault-core.workspace = true
 lms-script.workspace = true
 lms-node.workspace = true
 

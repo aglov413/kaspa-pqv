@@ -497,16 +497,36 @@ fn non_standard_outputs_are_refused_before_signing() {
     assert!(journal.get(&LeafId::new(vault.public_key.id, 0)).is_none());
 }
 
-/// A tiny change output inflates storage mass past what a block can hold.
-/// KIP-9 charges C * (1/output), so dust is enormously expensive.
+/// A small change output is refused, and the two reasons it can be refused for
+/// are distinguishable.
+///
+/// KIP-9 charges storage mass proportional to `1/output`, which produces both
+/// an **absolute** floor — below ~0.019 KAS nothing is viable regardless of the
+/// input — and a **relative** one, where change that is small compared to the
+/// UTXO being spent is also too expensive. Dust hits the first; a
+/// proportionally-small-but-not-dust output hits the second. A spend that
+/// reported the wrong one would send the user looking in the wrong place.
 #[test]
 fn a_dust_change_output_is_refused() {
     let (vault, _) = vault();
-    let dusty = vec![p2sh_output(994_000_000, 0xaa), p2sh_output(1_000, 0xbb)];
 
-    let err = preflight(&TN_PARAMS, &vault, &utxo(0), 1, &dusty, 60)
-        .expect_err("a dust change output must be refused");
-    let msg = err.to_string();
+    // Absolute: 1000 sompi is below the dust floor.
+    let dusty = vec![p2sh_output(994_000_000, 0xaa), p2sh_output(1_000, 0xbb)];
+    let msg = preflight(&TN_PARAMS, &vault, &utxo(0), 1, &dusty, 60)
+        .expect_err("a dust change output must be refused")
+        .to_string();
+    assert!(msg.contains("dust floor"), "expected a dust rejection, got: {msg}");
+
+    // Relative: clearing the absolute dust floor is **not sufficient**. Change
+    // of exactly 0.02 KAS against a 10 KAS input still overshoots the block
+    // storage limit — by eight mass units, which is the point: the two checks
+    // are complementary and neither subsumes the other. A wallet that only
+    // enforced the well-known 0.02 KAS floor would emit spends no node accepts.
+    let at_floor = vec![p2sh_output(991_500_000, 0xaa), p2sh_output(2_000_000, 0xbb)];
+    let msg = preflight(&TN_PARAMS, &vault, &utxo(0), 1, &at_floor, 60)
+        .map(|_| ())
+        .expect_err("the dust floor alone should not make this viable")
+        .to_string();
     assert!(
         msg.contains("storage mass") || msg.contains("never be included"),
         "expected a storage-mass rejection, got: {msg}"

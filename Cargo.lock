@@ -2386,7 +2386,9 @@ dependencies = [
  "lms-node",
  "lms-script",
  "lms-wallet",
+ "slh-wallet",
  "tokio",
+ "vault-core",
 ]
 
 [[package]]
@@ -2446,6 +2448,7 @@ dependencies = [
  "lms-script",
  "oxicrypt-lms",
  "sha2",
+ "vault-core",
 ]
 
 [[package]]
@@ -3808,6 +3811,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "slh-wallet"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fips205",
+ "hex",
+ "kaspa-addresses",
+ "kaspa-bip32",
+ "kaspa-consensus-core",
+ "kaspa-txscript",
+ "lms-harness",
+ "rand_core 0.6.4",
+ "sha2",
+ "slh-script",
+ "vault-core",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4445,6 +4466,10 @@ name = "vault-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
+ "kaspa-addresses",
+ "kaspa-bip32",
+ "kaspa-consensus-core",
  "kaspa-txscript",
  "sha2",
 ]

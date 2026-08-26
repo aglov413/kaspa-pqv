@@ -7,6 +7,7 @@ description = "Vault key derivation and address generation for Kaspa PQV LMS vau
 
 [dependencies]
 lms-script.workspace = true
+vault-core.workspace = true
 kaspa-bip32.workspace = true
 kaspa-txscript.workspace = true
 kaspa-consensus-core.workspace = true

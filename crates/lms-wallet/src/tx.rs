@@ -134,6 +134,40 @@ pub fn verify_and_measure(tx: &Transaction, utxo: &UtxoEntry) -> Result<u64> {
     Ok(vm.used_script_units().0)
 }
 
+/// Verify with the input's declared compute budget **enforced**, as a node does.
+///
+/// [`verify_and_measure`] builds the engine with `from_transaction_input`,
+/// which passes a limit of `u64::MAX`: it reports what a script consumed and
+/// will never refuse it. That is the right tool for measuring and the wrong one
+/// for confirming a spend is mineable, because an under-declared budget passes
+/// there and is rejected by consensus.
+///
+/// For a one-time key that distinction is the difference between a fixable
+/// mistake and stranded coins, so the final check before broadcast uses this.
+pub fn verify_under_budget(tx: &Transaction, utxo: &UtxoEntry, budget_units: u16) -> Result<u64> {
+    use kaspa_consensus_core::mass::{ComputeBudget, ScriptUnits};
+
+    let reused = SigHashReusedValuesUnsync::new();
+    let sig_cache: Cache<SigCacheKey, bool> = Cache::new(0);
+    let populated = PopulatedTransaction::new(tx, vec![utxo.clone()]);
+    let limit: ScriptUnits = ComputeBudget(budget_units).into();
+
+    let mut vm = TxScriptEngine::from_transaction_input_with_script_units_limit(
+        &populated,
+        &populated.tx.inputs[0],
+        0,
+        utxo,
+        EngineCtx::new(&sig_cache).with_reused(&reused),
+        Default::default(),
+        limit,
+    );
+
+    vm.execute().map_err(|e| {
+        anyhow!("the assembled spend does not verify under its declared compute budget: {e}")
+    })?;
+    Ok(vm.used_script_units().0)
+}
+
 /// Assemble a broadcastable transaction, measuring the compute budget.
 ///
 /// The spend is built once with the maximum budget to measure it, then rebuilt
@@ -164,10 +198,10 @@ pub fn assemble(
 
     let (tx, utxo_entry) = build(signed, utxo, tx_version, outputs, declared);
 
-    // Re-verify under the real budget: if the declared amount were too small
-    // the engine would abort here rather than on-chain.
-    verify_and_measure(&tx, &utxo_entry)
-        .context("spend does not verify under its declared compute budget")?;
+    // Re-verify with the budget enforced. If the declared amount were too
+    // small the engine aborts here rather than the node rejecting a
+    // transaction whose leaf has already signed.
+    verify_under_budget(&tx, &utxo_entry, declared)?;
 
     Ok(AssembledTransaction {
         tx,

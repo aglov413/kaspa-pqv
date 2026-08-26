@@ -25,6 +25,21 @@ use std::path::{Path, PathBuf};
 pub const ENV_KEY: &str = "KASPA_VAULT_KEY";
 /// Environment variable holding a BIP39 mnemonic.
 pub const ENV_MNEMONIC: &str = "KASPA_VAULT_MNEMONIC";
+
+/// Per-scheme key material overrides.
+///
+/// The `scheme'` level of the derivation path already gives each signature
+/// scheme an independent vault from one mnemonic, and that remains the default:
+/// when these are unset, both schemes derive from [`ENV_MNEMONIC`] /
+/// [`ENV_KEY`].
+///
+/// They exist because *testing* a new scheme is a different risk from running
+/// one. Pointing unvetted key-derivation code at the seed that already holds
+/// funds costs nothing to avoid, and an address whose seed you are unsure of is
+/// an address you cannot safely fund. Whichever variable was used is printed
+/// with every address.
+pub const ENV_MNEMONIC_SLH: &str = "KASPA_VAULT_MNEMONIC_SLH";
+pub const ENV_KEY_SLH: &str = "KASPA_VAULT_KEY_SLH";
 /// Environment variable holding the default network.
 pub const ENV_NETWORK: &str = "KASPA_VAULT_NETWORK";
 /// Environment variable holding the default key index.

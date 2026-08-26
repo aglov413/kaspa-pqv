@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vault-core", "crates/lms-script", "crates/slh-script", "crates/lms-harness", "crates/lms-wallet", "crates/lms-node", "crates/lms-cli"]
+members = ["crates/vault-core", "crates/lms-script", "crates/slh-script", "crates/slh-wallet", "crates/lms-harness", "crates/lms-wallet", "crates/lms-node", "crates/lms-cli"]
 
 [workspace.package]
 edition = "2021"
@@ -14,6 +14,16 @@ license = "Apache-2.0 OR MIT"
 # `LmsSigningKey` exposes `leaf_index()` / `is_exhausted()` so one-time-key
 # state is explicit rather than implicit.
 oxicrypt-lms = "=0.24.0"
+
+# Reference SLH-DSA implementation (FIPS 205). Used for keygen, signing, and as
+# the oracle the generated script is differentially tested against. Pinned
+# *exactly*: `slh_keygen_internal` is not public, so a deterministic vault key
+# has to be produced by driving `try_keygen_with_rng` with a seeded RNG, which
+# makes the vault address depend on the order and size of that function's three
+# random draws. A patch release that reorders them would silently move every
+# funded address. The pin plus `slh-wallet`'s frozen derivation vector turn
+# that into a build or test failure instead.
+fips205 = { version = "=0.4.1", default-features = false, features = ["slh_dsa_sha2_128s"] }
 
 # The real consensus script engine, by path. Not a reimplementation: the whole
 # point of the harness is that the generated script is executed by exactly the
@@ -29,6 +39,7 @@ kaspa-rpc-core = { path = "../L1-logic/rusty-kaspa/rpc/core" }
 vault-core = { path = "crates/vault-core" }
 lms-script = { path = "crates/lms-script" }
 slh-script = { path = "crates/slh-script" }
+slh-wallet = { path = "crates/slh-wallet" }
 lms-harness = { path = "crates/lms-harness" }
 lms-wallet = { path = "crates/lms-wallet" }
 lms-node = { path = "crates/lms-node" }
@@ -36,3 +47,4 @@ lms-node = { path = "crates/lms-node" }
 anyhow = "1"
 hex = "0.4"
 sha2 = "0.10"
+rand_core = "0.6"

@@ -57,6 +57,12 @@ pub const COIN_TYPE: u32 = 111_111;
 
 /// Domain separator for the seed derivation. Versioned so a future change to
 /// the construction is a different tag rather than a silent divergence.
+///
+/// The tag names LMS for historical reasons and is **deliberately not changed**
+/// for SLH-DSA. It separates *constructions*, not schemes: the `scheme'` level
+/// is already inside the BIP32 path, so two schemes derived from one mnemonic
+/// reach this point with different child keys and therefore different `xi`.
+/// Renaming it would move every LMS address that has ever been funded.
 pub const XI_DOMAIN: &[u8] = b"KaspaPQV-LMS-v1";
 
 /// Signature scheme occupying the `scheme'` level.
@@ -66,8 +72,13 @@ pub const XI_DOMAIN: &[u8] = b"KaspaPQV-LMS-v1";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Scheme {
-    /// LMS over SHA-256, RFC 8554 / NIST SP 800-208.
+    /// LMS over SHA-256, RFC 8554 / NIST SP 800-208. Stateful: each leaf is a
+    /// one-time key and signing twice under one leaf leaks it.
     LmsSha256 = 1,
+    /// SLH-DSA-SHA2-128s, FIPS 205. Stateless: the hypertree position is
+    /// derived from the message, so nothing has to be remembered between
+    /// signatures — including signatures the chain never sees.
+    SlhDsaSha2_128s = 2,
 }
 
 impl Scheme {
@@ -214,6 +225,36 @@ mod tests {
         let path = vault_path(Scheme::LmsSha256, 0, 0);
         assert_eq!(path, "m/101110'/111111'/1'/0'/0'");
         assert_eq!(path.matches('\'').count(), 5, "every level must be hardened");
+
+        let slh = vault_path(Scheme::SlhDsaSha2_128s, 0, 0);
+        assert_eq!(slh, "m/101110'/111111'/2'/0'/0'");
+    }
+
+    /// The `scheme'` level is the only thing keeping two schemes derived from
+    /// one mnemonic apart, since they share `XI_DOMAIN`. If this ever collided
+    /// the two vaults would be the same key material under different
+    /// algorithms.
+    ///
+    /// On-chain testing deliberately uses a *separate* mnemonic per scheme, so
+    /// nothing else in the test suite exercises the shared-seed case — which is
+    /// the case every real user will be in. This is that coverage.
+    #[test]
+    fn schemes_derive_independent_seeds_from_one_mnemonic() {
+        let seed = [0x42u8; 64];
+        let lms = derive_xi(&seed, Scheme::LmsSha256, 0, 0).unwrap();
+        let slh = derive_xi(&seed, Scheme::SlhDsaSha2_128s, 0, 0).unwrap();
+        assert_ne!(lms, slh, "two schemes shared a keygen seed");
+        assert_ne!(Scheme::LmsSha256.index(), Scheme::SlhDsaSha2_128s.index());
+
+        // Independence has to hold across every account and key index, not
+        // just the first, or a wallet holding several vaults could collide.
+        for account in 0..3 {
+            for index in 0..3 {
+                let a = derive_xi(&seed, Scheme::LmsSha256, account, index).unwrap();
+                let b = derive_xi(&seed, Scheme::SlhDsaSha2_128s, account, index).unwrap();
+                assert_ne!(a, b, "collision at account {account}, index {index}");
+            }
+        }
     }
 
     #[test]
