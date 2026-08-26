@@ -1,0 +1,21 @@
+[package]
+name = "lms-node"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Kaspa node connectivity for LMS vaults: UTXO lookup and broadcast over wRPC."
+
+[dependencies]
+lms-wallet.workspace = true
+lms-script.workspace = true
+
+kaspa-wrpc-client.workspace = true
+kaspa-rpc-core.workspace = true
+kaspa-consensus-core.workspace = true
+kaspa-addresses.workspace = true
+kaspa-txscript.workspace = true
+
+anyhow.workspace = true
+hex = "0.4"
+kaspa-bip32.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+target/
+vault.journal
+DEVNOTES.md

@@ -1,0 +1,21 @@
+[package]
+name = "lms-wallet"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Vault key derivation and address generation for Kaspa PQV LMS vaults."
+
+[dependencies]
+lms-script.workspace = true
+kaspa-bip32.workspace = true
+kaspa-txscript.workspace = true
+kaspa-consensus-core.workspace = true
+kaspa-addresses.workspace = true
+oxicrypt-lms.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+kaspa-txscript.workspace = true
+kaspa-consensus-core.workspace = true
+hex.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "lms-harness"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Differential tests: generated script vs the reference LMS implementation, executed by Kaspa's consensus engine."
+
+[dependencies]
+lms-script.workspace = true
+kaspa-txscript.workspace = true
+kaspa-txscript-errors.workspace = true
+kaspa-consensus-core.workspace = true
+oxicrypt-lms.workspace = true
+lms-wallet.workspace = true
+kaspa-bip32.workspace = true
+kaspa-addresses.workspace = true
+anyhow.workspace = true
+hex.workspace = true
+sha2.workspace = true

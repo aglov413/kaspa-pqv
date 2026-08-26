@@ -1,0 +1,24 @@
+[package]
+name = "lms-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Command-line wallet for Kaspa post-quantum LMS vaults."
+
+[dependencies]
+lms-wallet.workspace = true
+lms-script.workspace = true
+lms-node.workspace = true
+
+kaspa-addresses.workspace = true
+kaspa-bip32.workspace = true
+kaspa-consensus-core.workspace = true
+kaspa-txscript.workspace = true
+
+anyhow.workspace = true
+hex.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[[bin]]
+name = "kaspa-vault"
+path = "src/main.rs"

@@ -1,0 +1,11 @@
+[package]
+name = "lms-script"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Generates a fully unrolled Kaspa txscript verifier for LMS/LM-OTS signatures."
+
+[dependencies]
+kaspa-txscript.workspace = true
+anyhow.workspace = true
+sha2.workspace = true

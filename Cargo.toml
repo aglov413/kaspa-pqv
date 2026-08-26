@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/lms-script", "crates/lms-harness", "crates/lms-wallet", "crates/lms-node", "crates/lms-cli"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "Apache-2.0 OR MIT"
+
+[workspace.dependencies]
+# Reference LMS implementation. Used for keygen, signing, and as the oracle the
+# generated script is differentially tested against. Deterministic
+# `keygen_internal(xi: &[u8; 32])` matches the BIP32-derived-seed model, and
+# `LmsSigningKey` exposes `leaf_index()` / `is_exhausted()` so one-time-key
+# state is explicit rather than implicit.
+oxicrypt-lms = "=0.24.0"
+
+# The real consensus script engine, by path. Not a reimplementation: the whole
+# point of the harness is that the generated script is executed by exactly the
+# code a Toccata node runs.
+kaspa-txscript = { path = "../L1-logic/rusty-kaspa/crypto/txscript" }
+kaspa-txscript-errors = { path = "../L1-logic/rusty-kaspa/crypto/txscript/errors" }
+kaspa-consensus-core = { path = "../L1-logic/rusty-kaspa/consensus/core" }
+kaspa-bip32 = { path = "../L1-logic/rusty-kaspa/wallet/bip32" }
+kaspa-addresses = { path = "../L1-logic/rusty-kaspa/crypto/addresses" }
+kaspa-wrpc-client = { path = "../L1-logic/rusty-kaspa/rpc/wrpc/client" }
+kaspa-rpc-core = { path = "../L1-logic/rusty-kaspa/rpc/core" }
+
+lms-script = { path = "crates/lms-script" }
+lms-wallet = { path = "crates/lms-wallet" }
+lms-node = { path = "crates/lms-node" }
+
+anyhow = "1"
+hex = "0.4"
+sha2 = "0.10"
