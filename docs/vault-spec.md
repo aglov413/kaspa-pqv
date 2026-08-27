@@ -77,7 +77,61 @@ sound option currently available.
 
 **Never export an xpub for any ancestor of the vault branch.**
 
-### 2.1 The scheme seed
+### 2.1 How this differs from an ordinary Kaspa address
+
+An ordinary Kaspa address **is** a public key:
+
+```
+m/44'/111111'/0'/0/0            <- non-hardened below the account
+  -> secp256k1 private key
+     -> 32-byte x-only Schnorr public key
+        -> bech32(PubKey, pubkey)               kaspa:qr...
+
+script public key:  OpData32 <pubkey> OpCheckSig
+```
+
+A vault address is the hash of a **program**:
+
+```
+m/101110'/111111'/2'/0'/0'      <- every level hardened
+  -> secp256k1 private key
+     -> xi = SHA-256("KaspaPQV-v1" || ser256(k_child))
+        -> SLH-DSA key pair
+           -> emit 89 KB redeem script   (public key baked in as constants)
+              -> BLAKE2b-256(script)
+                 -> bech32(ScriptHash, hash)    kaspa:pz...
+
+script public key:  OpBlake2b OpData32 <script_hash> OpEqual
+```
+
+Four consequences:
+
+**What is published.** The ordinary form puts the key *in the address*. A vault
+publishes only a 256-bit hash; the post-quantum public key is not revealed until
+the first spend.
+
+**What the address commits to.** The ordinary form commits to one key. A vault
+commits to the key *and* the verifier code, the two-output spend shape
+([§5](#5-canonical-spend-shape)), the witness blob size
+([§6.3](#63-witness-encoding)), and for LMS the leaf index — all inside one
+hash. That is why every one of those is frozen: change any and the address
+moves.
+
+**The extra hop.** BIP32 yields a secp256k1 scalar, which is not uniform over 32
+bytes; hash-based keygen needs uniform input. `xi` re-hashes it under a domain
+separator ([§2.2](#22-the-scheme-seed)).
+
+**Hardening.** The ordinary path is non-hardened below the account, which is
+what makes watch-only xpubs work. A vault is hardened at every level,
+deliberately: a non-hardened branch plus one Shor-recovered on-chain key yields
+the parent private key, and from there everything beneath it.
+
+The result is that an ordinary address is Shor-able **from the address alone**,
+before it is ever spent. A vault address is a BLAKE2b-256 hash — nothing there
+to Shor — and what it eventually reveals is a hash-based key to which Shor does
+not apply.
+
+### 2.2 The scheme seed
 
 ```
 xi = SHA-256( XI_DOMAIN || ser256(k_child) )        # 32 bytes
@@ -89,21 +143,16 @@ domain separator removes any ambiguity about *which* 32 bytes are meant.
 
 `XI_DOMAIN` separates *constructions*, not schemes: `scheme'` is already inside
 the path, so two schemes derived from one mnemonic reach this point with
-different child keys. One tag is therefore correct for all of them.
+different child keys. One tag is therefore correct for all of them, and is not
+named after any.
 
-It read `KaspaPQV-LMS-v1` while LMS was the only scheme. That was never a
-functional problem, but it made the primary scheme's derivation look like a
-copy-paste error in a design whose central argument is that address-affecting
-constants must be named carefully. Corrected before any mainnet funds existed,
-which was the last cheap moment to do it.
-
-### 2.2 LMS key material
+### 2.3 LMS key material
 
 `xi` is the deterministic keygen seed for `LmsSigningKey::new_internal`,
 `LMS_SHA256_M32_H15 / LMOTS_SHA256_N32_W2`: 32,768 one-time keys, public key
 `(I, T[1])`.
 
-### 2.3 SLH-DSA key material
+### 2.4 SLH-DSA key material
 
 FIPS 205 defines `slh_keygen_internal(SK.seed, SK.prf, PK.seed)`, but the
 reference implementation keeps it private and exposes only a
