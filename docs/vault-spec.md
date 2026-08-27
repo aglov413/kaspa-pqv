@@ -291,9 +291,25 @@ FIPS 205 Table 2, security category 1.
 | public key | 32 bytes |
 | signature | 7,856 bytes (491 × 16) |
 
-`128s`, not `128f`: `f` has 22 hypertree layers against 7, so ~11,600 hashes
-instead of ~3,900. Fast signing and slow verification is the wrong trade when
-verification is the on-chain cost.
+`128s`, not `128f`. Worst-case `F`/`H` invocations follow from the parameter
+sets, so the comparison is arithmetic rather than measurement:
+
+```
+FORS      k(1 + a) + 1
+hypertree d[ len(w-1) + 1 + h' ]
+H_msg     2                              (two SHA-256 calls)
+
+128s   d=7,  h'=9,  a=12, k=14    183 +  3,745 + 2 =  3,930
+128f   d=22, h'=3,  a=6,  k=33    232 + 11,638 + 2 = 11,872
+```
+
+Three times the verification work, because `f` trades hypertree depth for
+signing speed — 22 layers of full WOTS+ verification against 7. Fast signing and
+slow verification is the wrong side of that trade when verification is the
+on-chain cost and signing happens once, offline.
+
+The measured figure for `128s` is lower than 3,930 because chain steps are
+gated: a spend executes roughly half the emitted steps ([§6.4](#64-verifier-structure)).
 
 ### 6.2 Compressed ADRS
 
@@ -336,7 +352,9 @@ elements from one blob costs `16·e·(e+1)`; across `E` elements in blobs of `e`
 that is `16·E·(e+1)` — **linear in blob size, not quadratic in the signature**.
 
 `BLOB_ELEMS` is part of the redeem script and therefore part of the address.
-Measured sweep:
+Measured sweep. **These are the bare verifier**, which takes its message from
+the witness; a vault script is 42 bytes larger because it emits the binding
+digest instead ([§11](#11-measured-costs) quotes the vault figure, 89,235):
 
 | elems | blobs | redeem B | script units | peak stack |
 |--:|--:|--:|--:|--:|
@@ -411,9 +429,22 @@ would cost 4.5% more mass but pushes keygen to 178 s.
 
 ### 8.1 Statefulness and off-chain signing
 
-An LM-OTS private key is `p` values; a signature is a partial opening of it.
-Two signatures under one key expose `min(a_i, b_i)` per chain, and published
-recovery is roughly **2^34 hashes from two signatures**.
+An LM-OTS private key is `p` values and a signature is a partial opening of it.
+One signature is safe because the checksum is self-limiting: raising a message
+digit lowers the checksum, so forging would require walking a checksum chain
+backwards, i.e. inverting a hash.
+
+**Two signatures remove that protection.** They expose `min(a_i, b_i)` on every
+chain, and walking a chain *forward* is free, so an attacker can grind for a
+message whose digits dominate those minimums and whose checksum is consistent.
+That mechanism is structural and not in dispute.
+
+The *cost* of that grind depends on how far apart the two signatures' digits
+fall. The figure usually quoted is **~2^34 hashes from two signatures**,
+reported by the QRL project, which has run this construction in production
+since 2018; it is an order-of-magnitude claim rather than a bound this project
+has reproduced. Whatever the constant, it is small enough to treat two
+signatures under one key as a loss of funds rather than a degradation.
 
 Pinning `q` into the script means key `q` can only spend the UTXO at address
 `q`, so on-chain state is discoverable. **This does not cover signatures the
