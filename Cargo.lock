@@ -4421,6 +4421,7 @@ dependencies = [
  "kaspa-txscript",
  "lms-script",
  "lms-wallet",
+ "sha2",
  "slh-wallet",
  "tokio",
  "vault-core",

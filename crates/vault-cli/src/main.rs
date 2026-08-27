@@ -16,6 +16,7 @@
 //! burn a one-time key — so it lands together with the confirmation flow rather
 //! than before it.
 
+mod artifacts_cmd;
 mod env;
 mod slh_cmd;
 mod spend_cmd;
@@ -358,6 +359,7 @@ fn usage() {
     eprintln!();
     eprintln!("commands:");
     eprintln!("  info                    scheme and parameter summary
+  artifacts               every value an address depends on, for build verification
   slh-address             SLH-DSA vault address (stateless scheme)
   slh-balance             what the SLH-DSA vault holds
   slh-spend               spend from the SLH-DSA vault");
@@ -400,6 +402,7 @@ async fn main() -> Result<()> {
 
     match args.command.as_str() {
         "info" => cmd_info(),
+        "artifacts" => artifacts_cmd::cmd_artifacts()?,
         "init-env" => cmd_init_env(args.env_file.as_deref().unwrap_or(".env"))?,
         "addresses" => cmd_addresses(&args, &env)?,
         "balance" => cmd_balance(&args, &env).await?,

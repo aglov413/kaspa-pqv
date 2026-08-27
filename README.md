@@ -21,6 +21,11 @@ Neither is strictly better. SLH-DSA costs about 3.9x the bytes and deletes an
 entire category of operational failure; LMS is cheap and demands that you never
 sign the same key twice, including for things the chain never sees.
 
+The normative description — derivation, the binding digest byte layout, the
+compressed ADRS, witness encoding, security considerations and the frozen
+vectors — is in **[`docs/vault-spec.md`](docs/vault-spec.md)**. This README is
+the rationale and the quickstart.
+
 > **Status: working on testnet-10. Not audited. Not for mainnet funds.**
 > Four spends have been verified by real Kaspa consensus — see
 > [Confirmed on-chain](#confirmed-on-chain). Read [Limitations](#limitations)
@@ -372,6 +377,7 @@ crates/lms-wallet/    vault, spend journal, assembly
 crates/vault-node/      wRPC client (Public Node Network or your own node)
 crates/vault-cli/       the kaspa-vault binary
 crates/vault-harness/   differential tests against the real consensus engine
+docs/vault-spec.md    the normative specification
 ```
 
 `slh-wallet` has no journal, no leaf cursor, no gap limit and no migration path.
@@ -387,6 +393,24 @@ assertion.
 ```sh
 cargo test --release --workspace
 ```
+
+## Verifying your build
+
+A vault address is the hash of a script this workspace *compiles*, so an
+independent build that differs by one byte derives a different address from the
+same mnemonic. `Cargo.lock` is committed, `fips205` and `oxicrypt-lms` are
+pinned exactly, and `rust-toolchain.toml` pins the compiler — but the check
+that matters is:
+
+```sh
+kaspa-vault artifacts
+```
+
+It derives every address-affecting value from the published BIP39 test
+mnemonic, takes no key material and touches no network. Compare against
+[`docs/vault-spec.md`](docs/vault-spec.md) §3.2 and §9. **Any difference is a
+compatibility break — do not fund an address from a build that prints something
+else.**
 
 ## Licence
 

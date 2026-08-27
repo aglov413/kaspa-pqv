@@ -16,7 +16,7 @@ use lms_wallet::journal::{FileJournal, LeafId, SpendJournal};
 use lms_wallet::preflight::estimate;
 use lms_wallet::spend::{build_spend, VaultUtxo};
 use lms_wallet::tx::assemble;
-use lms_wallet::vault::{signing_key_at, BudgetStatus, Vault};
+use lms_wallet::vault::{signing_key_at, Vault};
 
 /// Compute budget declared while sizing. The real value is measured during
 /// assembly; this only has to be in the right ballpark for the mass estimate.

@@ -1,0 +1,15 @@
+# Pinned so the emitted redeem script is reproducible.
+#
+# A vault address is the BLAKE2b hash of a script this workspace *compiles*.
+# If a different toolchain produced different bytes, an independent build would
+# derive a different address from the same mnemonic, and anyone funding it from
+# that build would lose the coins. The frozen vectors catch drift within one
+# tree; this is what lets a third party reproduce the tree.
+#
+# The generator uses no floating point, no iteration over unordered
+# collections, and no compiler-version-dependent behaviour, so in practice the
+# output is stable across toolchains — but "in practice" is not the standard to
+# hold an address to, so the version is stated rather than assumed.
+[toolchain]
+channel = "1.96.1"
+components = ["rustfmt", "clippy"]

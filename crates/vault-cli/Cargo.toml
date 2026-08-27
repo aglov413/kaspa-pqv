@@ -19,6 +19,7 @@ kaspa-txscript.workspace = true
 
 anyhow.workspace = true
 hex.workspace = true
+sha2.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [[bin]]

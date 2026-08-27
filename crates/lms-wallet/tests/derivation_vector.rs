@@ -68,6 +68,18 @@ fn frozen_vector_still_derives() {
     assert_eq!(hex::encode(vault.public_key.root), VECTOR_ROOT, "LMS Merkle root changed");
 
     let addresses = vault.addresses(Prefix::Mainnet).expect("addresses");
+    // The address is BLAKE2b of the script, so it already pins the script
+    // exactly — but hashing it separately says *which* thing moved when this
+    // fails, and the generator is the thing most likely to have moved.
+    use sha2::{Digest, Sha256};
+    let script = vault.redeem_script(0).expect("redeem script");
+    assert_eq!(script.len(), VECTOR_SCRIPT_LEN, "emitted script changed size");
+    assert_eq!(
+        hex::encode(Sha256::digest(&script)),
+        VECTOR_SCRIPT_SHA256,
+        "the emitted redeem script changed -- every leaf address moves with it"
+    );
+
     assert_eq!(addresses[0].to_string(), VECTOR_LEAF_0, "leaf 0 address changed");
     assert_eq!(addresses.last().unwrap().to_string(), VECTOR_LEAF_LAST, "last leaf address changed");
 }
@@ -185,3 +197,9 @@ fn leaf_range_is_bounded_by_tree_height() {
         "leaf 32768 is out of range for h = 15"
     );
 }
+
+/// Length and SHA-256 of the leaf-0 redeem script. See
+/// `kaspa-vault artifacts` for the same values alongside SLH-DSA's.
+const VECTOR_SCRIPT_LEN: usize = 19717;
+const VECTOR_SCRIPT_SHA256: &str =
+    "64ba41e317374ef149573a379c14a3778b99039d8bde1f327f32d0a8fbbc06f6";
