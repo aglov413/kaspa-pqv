@@ -333,16 +333,21 @@ and mass rules are identical there, so no consensus obstacle remains — but
 "should work" and "has worked" are different claims and only the second one is
 worth trusting with real value.
 
-**Reproducible builds are not yet pinned.** The redeem script is compiled from
-source, so a changed generator is a changed address. Frozen derivation vectors
-pin mnemonic through to bech32 address for both schemes, which turns drift into
-a failing test — but the build itself is not yet reproducible, and that is a
-prerequisite before mainnet funds.
+**The address depends on a compiled artifact.** The redeem script is emitted by
+this workspace, so a changed generator is a changed address — and nothing in a
+funded address announces which construction produced it. That is pinned rather
+than left open: `Cargo.lock` is committed, both reference implementations are
+exact-pinned, `rust-toolchain.toml` fixes the compiler, frozen vectors carry
+mnemonic through to bech32 address for both schemes, and `kaspa-vault artifacts`
+lets a third party check their tree against yours. What is *not* claimed is a
+bit-reproducible build in the strict sense — binaries have not been compared
+across machines. The property that matters for an address is that the emitted
+script is deterministic, and that is what is pinned and checkable.
 
 **Parameters are baked into the address.** The derivation purpose, the canonical
 two-output shape, LMS's `h` and `w`, and SLH-DSA's witness blob size all change
 the redeem script and therefore every address. They cannot be altered after
-funding.
+funding, and `kaspa-vault artifacts` is how you notice if one has.
 
 **LMS is stateful.** Losing the spend journal *and* signing again from the same
 address exposes a one-time key. The pinned-leaf design makes state recoverable

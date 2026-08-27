@@ -574,6 +574,16 @@ same mnemonic, and anyone funding it loses the coins with no error anywhere.
 
 Any difference in that output is a compatibility break.
 
+What is **not** claimed is a bit-reproducible build in the
+[reproducible-builds.org](https://reproducible-builds.org) sense: binaries have
+not been compared across machines, and build paths, timestamps and locale are
+uncontrolled. That property is not what an address needs. What it needs is that
+the *emitted script* is deterministic given the same source, and that is pinned
+above and checkable by anyone. The generator uses no floating point, no
+iteration over unordered collections, and no compiler-version-dependent
+behaviour; a directory rename was confirmed to leave every artifact byte
+identical.
+
 ---
 
 ## 10. Open questions
