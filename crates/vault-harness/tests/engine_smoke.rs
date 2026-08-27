@@ -4,7 +4,7 @@
 //! assumptions are wrong every later number is wrong too.
 
 use kaspa_txscript::opcodes::codes::*;
-use lms_harness::execute;
+use vault_harness::execute;
 use lms_script::ScriptWriter;
 use sha2::{Digest, Sha256};
 

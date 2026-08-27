@@ -7,7 +7,7 @@
 //! Every number here is produced by executing generated script under the
 //! consensus engine against a signature from the reference implementation.
 
-use lms_harness::{execute, Cost};
+use vault_harness::{execute, Cost};
 use lms_script::params::{LmsParams, N};
 use lms_script::verify::{emit_verify, LmsPublicKey};
 use lms_script::ScriptWriter;

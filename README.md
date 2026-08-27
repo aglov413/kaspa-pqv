@@ -42,7 +42,7 @@ current tip block — v1 being exactly the format that carries `compute_budget`.
 Reproduce it with:
 
 ```sh
-cargo run -p lms-node --release --example node_probe -- ws://127.0.0.1:17110 mainnet
+cargo run -p vault-node --release --example node_probe -- ws://127.0.0.1:17110 mainnet
 ```
 
 The more interesting way to state this: Toccata was designed for covenants and
@@ -190,12 +190,11 @@ m / 101110' / 111111' / scheme' / account' / key_index'   ->  xi (32 bytes)
                          2' = SLH-DSA
 ```
 
-`xi = SHA-256("KaspaPQV-LMS-v1" || ser256(k_child))`, hashed rather than used
-raw because a BIP32 key is not uniform over 32 bytes and the domain separator
-removes any ambiguity about which bytes are meant. The tag names LMS for
-historical reasons and is deliberately unchanged for SLH-DSA: it separates
-*constructions*, not schemes — the `scheme'` level already gives each scheme an
-independent branch, and renaming the tag would move every funded LMS address.
+`xi = SHA-256("KaspaPQV-v1" || ser256(k_child))`, hashed rather than used raw
+because a BIP32 key is not uniform over 32 bytes and the domain separator
+removes any ambiguity about which bytes are meant. One tag serves every scheme:
+it separates *constructions*, not schemes — the `scheme'` level already gives
+each scheme an independent branch.
 
 **Every level is hardened**, and that is load-bearing rather than cautious.
 Kaspa's standard path is non-hardened below the account, and its addresses
@@ -370,9 +369,9 @@ crates/slh-script/    FIPS 205 parameters, ADRS, reference verifier, generator
 crates/slh-wallet/    deterministic keygen, vault, spending
 crates/lms-script/    RFC 8554 parameters and generator
 crates/lms-wallet/    vault, spend journal, assembly
-crates/lms-node/      wRPC client (Public Node Network or your own node)
-crates/lms-cli/       the kaspa-vault binary
-crates/lms-harness/   differential tests against the real consensus engine
+crates/vault-node/      wRPC client (Public Node Network or your own node)
+crates/vault-cli/       the kaspa-vault binary
+crates/vault-harness/   differential tests against the real consensus engine
 ```
 
 `slh-wallet` has no journal, no leaf cursor, no gap limit and no migration path.

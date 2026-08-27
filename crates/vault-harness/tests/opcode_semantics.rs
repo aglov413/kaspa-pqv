@@ -7,7 +7,7 @@
 //! here against the real engine.
 
 use kaspa_txscript::opcodes::codes::*;
-use lms_harness::execute;
+use vault_harness::execute;
 use lms_script::ScriptWriter;
 
 /// Assert a script leaves exactly `expected` (as a number) on the stack.

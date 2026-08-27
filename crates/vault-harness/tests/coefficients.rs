@@ -7,7 +7,7 @@
 //! either bricks the vault or, worse, lets a forged signature through.
 
 use kaspa_txscript::opcodes::codes::*;
-use lms_harness::execute;
+use vault_harness::execute;
 use lms_script::ots::{coef, emit_coefficient};
 use lms_script::{LmsParams, ScriptWriter};
 

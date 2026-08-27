@@ -6,7 +6,7 @@
 //! number of one-time keys by two. This measures the actual slope, including
 //! keygen, which is the cost that does *not* stay cheap.
 
-use lms_harness::execute;
+use vault_harness::execute;
 use lms_script::params::{LmsParams, N};
 use lms_script::verify::{emit_verify, LmsPublicKey};
 use lms_script::ScriptWriter;

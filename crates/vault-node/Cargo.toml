@@ -1,5 +1,5 @@
 [package]
-name = "lms-node"
+name = "vault-node"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

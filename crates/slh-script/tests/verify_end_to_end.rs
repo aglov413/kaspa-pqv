@@ -5,7 +5,7 @@
 //! for the same reasons it would on a node, and the reported cost is the
 //! engine's own accounting.
 
-use lms_harness::execute;
+use vault_harness::execute;
 use slh_script::params::*;
 use slh_script::witness::BlobPlan;
 

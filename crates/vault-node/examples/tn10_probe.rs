@@ -1,10 +1,10 @@
 //! Live check: reach a testnet-10 node through the Public Node Network and
 //! confirm it can serve vault queries.
 //!
-//! Run with `cargo run -p lms-node --example tn10_probe`.
+//! Run with `cargo run -p vault-node --example tn10_probe`.
 
 use kaspa_addresses::Prefix;
-use lms_node::NodeClient;
+use vault_node::NodeClient;
 use lms_wallet::derivation::{derive_xi, Scheme};
 use lms_wallet::vault::Vault;
 

@@ -7,11 +7,11 @@
 //! has to be asked rather than inferred.
 //!
 //! ```text
-//! cargo run -p lms-node --release --example node_probe -- ws://127.0.0.1:17110 mainnet
+//! cargo run -p vault-node --release --example node_probe -- ws://127.0.0.1:17110 mainnet
 //! ```
 
 use kaspa_consensus_core::network::{NetworkId, NetworkType};
-use lms_node::NodeClient;
+use vault_node::NodeClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

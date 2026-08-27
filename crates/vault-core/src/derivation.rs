@@ -58,12 +58,18 @@ pub const COIN_TYPE: u32 = 111_111;
 /// Domain separator for the seed derivation. Versioned so a future change to
 /// the construction is a different tag rather than a silent divergence.
 ///
-/// The tag names LMS for historical reasons and is **deliberately not changed**
-/// for SLH-DSA. It separates *constructions*, not schemes: the `scheme'` level
-/// is already inside the BIP32 path, so two schemes derived from one mnemonic
-/// reach this point with different child keys and therefore different `xi`.
-/// Renaming it would move every LMS address that has ever been funded.
-pub const XI_DOMAIN: &[u8] = b"KaspaPQV-LMS-v1";
+/// It separates *constructions*, not schemes: the `scheme'` level is already
+/// inside the BIP32 path, so two schemes derived from one mnemonic reach this
+/// point with different child keys and therefore different `xi`. One tag is
+/// therefore correct for every scheme, and the name says so.
+///
+/// It read `KaspaPQV-LMS-v1` while LMS was the only scheme. That was never a
+/// functional problem — `scheme'` did the separating — but it made the primary
+/// scheme's derivation look like a copy-paste error, in a design whose whole
+/// argument is that address-affecting constants must be named carefully. It was
+/// corrected before any mainnet funds existed, which was the last cheap moment
+/// to do it.
+pub const XI_DOMAIN: &[u8] = b"KaspaPQV-v1";
 
 /// Signature scheme occupying the `scheme'` level.
 ///

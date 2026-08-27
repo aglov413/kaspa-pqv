@@ -4,7 +4,7 @@
 //! measured against the engine rather than read off the source.
 
 use kaspa_txscript::opcodes::codes::*;
-use lms_harness::execute;
+use vault_harness::execute;
 use lms_script::ScriptWriter;
 use sha2::{Digest, Sha256};
 

@@ -26,7 +26,7 @@ use env::{
     ENV_TEMPLATE,
 };
 use kaspa_addresses::Prefix;
-use lms_node::NodeClient;
+use vault_node::NodeClient;
 use lms_wallet::derivation::{vault_path, Derivation, Scheme};
 use lms_wallet::key_material::KeyMaterial;
 use lms_wallet::vault::{Vault, LEAF_WARNING_THRESHOLD, PARAMS};
@@ -330,8 +330,8 @@ async fn cmd_spend(args: &Args, env: &EnvFile) -> Result<()> {
 
     eprintln!("connecting to {} via the public node network...", resolved.network);
     let client = match resolved.network.as_str() {
-        "mainnet" => lms_node::NodeClient::mainnet().await?,
-        _ => lms_node::NodeClient::testnet10().await?,
+        "mainnet" => vault_node::NodeClient::mainnet().await?,
+        _ => vault_node::NodeClient::testnet10().await?,
     };
 
     let request = spend_cmd::SpendRequest {

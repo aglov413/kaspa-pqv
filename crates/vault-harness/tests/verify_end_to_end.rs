@@ -7,7 +7,7 @@
 //! the reference accepts — and rejects what it rejects — the verifier is
 //! correct for the reasons that matter.
 
-use lms_harness::execute;
+use vault_harness::execute;
 use lms_script::params::{LmsParams, N};
 use lms_script::verify::{emit_verify, LmsPublicKey};
 use lms_script::ScriptWriter;

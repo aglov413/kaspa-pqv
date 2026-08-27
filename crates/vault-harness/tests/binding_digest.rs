@@ -12,7 +12,7 @@ use kaspa_consensus_core::tx::{
     TransactionId, UtxoEntry,
 };
 use kaspa_txscript::opcodes::codes::*;
-use lms_harness::execute_with_tx;
+use vault_harness::execute_with_tx;
 use lms_script::binding::{binding_digest, binding_preimage, emit_binding_digest, OutputView, SpendView};
 use lms_script::ScriptWriter;
 

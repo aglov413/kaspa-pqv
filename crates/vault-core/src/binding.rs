@@ -247,7 +247,7 @@ mod tests {
     /// the bare script with no version prefix. Each output is therefore 2 bytes
     /// short.
     ///
-    /// `binding_digest_matches_the_engine` in `lms-harness` settles which is
+    /// `binding_digest_matches_the_engine` in `vault-harness` settles which is
     /// correct by running the real introspection opcodes.
     #[test]
     fn preimage_has_the_documented_layout() {

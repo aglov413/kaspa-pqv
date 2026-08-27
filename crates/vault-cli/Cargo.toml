@@ -1,5 +1,5 @@
 [package]
-name = "lms-cli"
+name = "vault-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ lms-wallet.workspace = true
 slh-wallet.workspace = true
 vault-core.workspace = true
 lms-script.workspace = true
-lms-node.workspace = true
+vault-node.workspace = true
 
 kaspa-addresses.workspace = true
 kaspa-bip32.workspace = true

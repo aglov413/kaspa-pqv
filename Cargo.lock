@@ -2374,58 +2374,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
-name = "lms-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "kaspa-addresses",
- "kaspa-bip32",
- "kaspa-consensus-core",
- "kaspa-txscript",
- "lms-node",
- "lms-script",
- "lms-wallet",
- "slh-wallet",
- "tokio",
- "vault-core",
-]
-
-[[package]]
-name = "lms-harness"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "kaspa-addresses",
- "kaspa-bip32",
- "kaspa-consensus-core",
- "kaspa-txscript",
- "kaspa-txscript-errors",
- "lms-script",
- "lms-wallet",
- "oxicrypt-lms",
- "sha2",
-]
-
-[[package]]
-name = "lms-node"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "kaspa-addresses",
- "kaspa-bip32",
- "kaspa-consensus-core",
- "kaspa-rpc-core",
- "kaspa-txscript",
- "kaspa-wrpc-client",
- "lms-script",
- "lms-wallet",
- "tokio",
-]
-
-[[package]]
 name = "lms-script"
 version = "0.1.0"
 dependencies = [
@@ -3802,12 +3750,12 @@ dependencies = [
  "kaspa-bip32",
  "kaspa-consensus-core",
  "kaspa-txscript",
- "lms-harness",
  "lms-script",
  "lms-wallet",
  "rand_core 0.6.4",
  "sha2",
  "vault-core",
+ "vault-harness",
 ]
 
 [[package]]
@@ -3821,11 +3769,11 @@ dependencies = [
  "kaspa-bip32",
  "kaspa-consensus-core",
  "kaspa-txscript",
- "lms-harness",
  "rand_core 0.6.4",
  "sha2",
  "slh-script",
  "vault-core",
+ "vault-harness",
 ]
 
 [[package]]
@@ -4462,6 +4410,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "068e763e8279de7ab94b6afebded2cb701678af094feb1c12ccb061b4783c1be"
 
 [[package]]
+name = "vault-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "kaspa-addresses",
+ "kaspa-bip32",
+ "kaspa-consensus-core",
+ "kaspa-txscript",
+ "lms-script",
+ "lms-wallet",
+ "slh-wallet",
+ "tokio",
+ "vault-core",
+ "vault-node",
+]
+
+[[package]]
 name = "vault-core"
 version = "0.1.0"
 dependencies = [
@@ -4472,6 +4438,40 @@ dependencies = [
  "kaspa-consensus-core",
  "kaspa-txscript",
  "sha2",
+]
+
+[[package]]
+name = "vault-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "kaspa-addresses",
+ "kaspa-bip32",
+ "kaspa-consensus-core",
+ "kaspa-txscript",
+ "kaspa-txscript-errors",
+ "lms-script",
+ "lms-wallet",
+ "oxicrypt-lms",
+ "sha2",
+]
+
+[[package]]
+name = "vault-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "kaspa-addresses",
+ "kaspa-bip32",
+ "kaspa-consensus-core",
+ "kaspa-rpc-core",
+ "kaspa-txscript",
+ "kaspa-wrpc-client",
+ "lms-script",
+ "lms-wallet",
+ "tokio",
 ]
 
 [[package]]

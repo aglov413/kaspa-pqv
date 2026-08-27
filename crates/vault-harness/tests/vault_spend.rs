@@ -15,7 +15,7 @@ use kaspa_consensus_core::tx::{
     TransactionOutput, UtxoEntry,
 };
 use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script};
-use lms_harness::execute_with_tx;
+use vault_harness::execute_with_tx;
 use lms_script::binding::{binding_digest, OutputView, SpendView};
 use lms_script::params::N;
 use lms_script::ScriptWriter;
@@ -135,7 +135,7 @@ fn build_spend(leaf: u32, outputs: Vec<OutputView>, tamper: impl FnOnce(&mut Vec
     Spend { tx, utxos: vec![utxo], redeem_script }
 }
 
-fn run(spend: &Spend) -> anyhow::Result<lms_harness::Cost> {
+fn run(spend: &Spend) -> anyhow::Result<vault_harness::Cost> {
     execute_with_tx(&spend.redeem_script, &spend.tx, spend.utxos.clone(), 0)
 }
 

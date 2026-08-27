@@ -22,7 +22,7 @@ use kaspa_consensus_core::tx::{
 };
 use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script};
 
-use lms_harness::{execute_with_tx, execute_with_tx_budget};
+use vault_harness::{execute_with_tx, execute_with_tx_budget};
 
 mod common;
 use common::{budget_for, signed};

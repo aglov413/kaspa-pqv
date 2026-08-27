@@ -11,7 +11,7 @@
 //! code — and why the ADRS is then deliberately broken, to prove the check
 //! would have caught it.
 
-use lms_harness::execute;
+use vault_harness::execute;
 use slh_script::adrs::{hash, Adrs};
 use slh_script::params::*;
 use slh_script::reference::{self, Signature};

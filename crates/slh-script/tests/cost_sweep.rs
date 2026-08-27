@@ -4,7 +4,7 @@
 //! rather than argued about: the witness blob size, and the spread of script
 //! units across signatures.
 
-use lms_harness::execute;
+use vault_harness::execute;
 use slh_script::params::*;
 use slh_script::witness::BlobPlan;
 use slh_script::{build_verify_script, PublicKey};

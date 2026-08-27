@@ -10,7 +10,7 @@ use anyhow::{bail, ensure, Context, Result};
 use kaspa_addresses::{Address, Prefix};
 use kaspa_consensus_core::config::params::Params;
 use kaspa_txscript::pay_to_address_script;
-use lms_node::NodeClient;
+use vault_node::NodeClient;
 use lms_script::binding::OutputView;
 use lms_wallet::journal::{FileJournal, LeafId, SpendJournal};
 use lms_wallet::preflight::estimate;

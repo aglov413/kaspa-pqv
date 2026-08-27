@@ -14,7 +14,7 @@ hex.workspace = true
 
 [dev-dependencies]
 vault-core.workspace = true
-lms-harness.workspace = true
+vault-harness.workspace = true
 kaspa-consensus-core.workspace = true
 lms-script.workspace = true
 lms-wallet.workspace = true

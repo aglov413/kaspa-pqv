@@ -28,13 +28,13 @@ const TEST_MNEMONIC: &str =
 // balance rather than an error.
 // ---------------------------------------------------------------------------
 const VECTOR_PATH: &str = "m/101110'/111111'/1'/0'/0'";
-const VECTOR_XI: &str = "68f18d5c6bfcaf2896af8a6a81fda684386854c5d92406c367e64828a1a2ad18";
-const VECTOR_I: &str = "c8ea90bf767f9e475e6ccc4b7539fb04";
-const VECTOR_ROOT: &str = "fcd5c6fb26e9bf0b80f6a02269ecac26aff094951d048e87f008899a0ffdc9d2";
+const VECTOR_XI: &str = "8cb91439205eac77aef51edf93480e6bd8f40e0d41ea9c9e49a166fa3eadaa06";
+const VECTOR_I: &str = "4703661b8595616f65a81f43d5ca0442";
+const VECTOR_ROOT: &str = "d19da4e6a20ec028ef002bfa2a69917871a864186c4f711bf277be7d95cdd0f9";
 const VECTOR_LEAF_0: &str =
-    "kaspa:ppcvs93hqryj6p2jmn5nvmz6a40rmg7wtky68rw9l5s5nxwemnljz4h9rxuxm";
+    "kaspa:pqtjrau4yfjdg48hvucw76tmvwluz208huvlhrqrylr22j3wwat4wgenq8hjh";
 const VECTOR_LEAF_LAST: &str =
-    "kaspa:prknnj0w2sw9tv9ng67d5wcnmr9yln90lmjlgv5uj4t83elwthuw2yz44y0r0";
+    "kaspa:pr495exzslhdc02540x8w669xl8p4epwekwyyu4plvscsqvcg7z76dlhps6df";
 
 fn test_seed() -> Vec<u8> {
     let mnemonic = Mnemonic::new(TEST_MNEMONIC, Language::English).expect("valid mnemonic");
@@ -48,7 +48,7 @@ fn derivation_constants_are_pinned() {
     assert_eq!(PURPOSE, 101_110, "BIP43 purpose (0b101110 = 46, after Kaspa's 44/45)");
     assert_eq!(COIN_TYPE, 111_111, "SLIP-0044 coin type");
     assert_eq!(Scheme::LmsSha256.index(), 1, "scheme index");
-    assert_eq!(XI_DOMAIN, b"KaspaPQV-LMS-v1", "xi domain separator");
+    assert_eq!(XI_DOMAIN, b"KaspaPQV-v1", "xi domain separator");
     assert_eq!(vault_path(Scheme::LmsSha256, 0, 0), "m/101110'/111111'/1'/0'/0'");
 }
 

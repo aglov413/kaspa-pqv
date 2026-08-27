@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vault-core", "crates/lms-script", "crates/slh-script", "crates/slh-wallet", "crates/lms-harness", "crates/lms-wallet", "crates/lms-node", "crates/lms-cli"]
+members = ["crates/vault-core", "crates/lms-script", "crates/slh-script", "crates/slh-wallet", "crates/vault-harness", "crates/lms-wallet", "crates/vault-node", "crates/vault-cli"]
 
 [workspace.package]
 edition = "2021"
@@ -40,9 +40,9 @@ vault-core = { path = "crates/vault-core" }
 lms-script = { path = "crates/lms-script" }
 slh-script = { path = "crates/slh-script" }
 slh-wallet = { path = "crates/slh-wallet" }
-lms-harness = { path = "crates/lms-harness" }
+vault-harness = { path = "crates/vault-harness" }
 lms-wallet = { path = "crates/lms-wallet" }
-lms-node = { path = "crates/lms-node" }
+vault-node = { path = "crates/vault-node" }
 
 anyhow = "1"
 hex = "0.4"

@@ -11,7 +11,7 @@
 use anyhow::{bail, ensure, Context, Result};
 use kaspa_addresses::{Address, Prefix};
 use kaspa_txscript::pay_to_script_hash_script;
-use lms_node::NodeClient;
+use vault_node::NodeClient;
 use slh_wallet::spend::{build_spend, preflight, VaultUtxo, PREFLIGHT_BUDGET_UNITS};
 use slh_wallet::{vault_path, Scheme, SlhVault};
 use vault_core::binding::OutputView;

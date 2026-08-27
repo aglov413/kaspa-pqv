@@ -19,7 +19,7 @@ use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_scr
 
 use fips205::slh_dsa_sha2_128s;
 use fips205::traits::{SerDes, Signer};
-use lms_harness::execute_with_tx;
+use vault_harness::execute_with_tx;
 use slh_script::witness::BlobPlan;
 use slh_script::{build_vault_script, PublicKey};
 use vault_core::binding::{binding_digest, OutputView, SpendView};

@@ -1,5 +1,5 @@
 [package]
-name = "lms-harness"
+name = "vault-harness"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

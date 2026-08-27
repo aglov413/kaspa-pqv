@@ -64,7 +64,7 @@ fn the_derivation_path_is_frozen() {
 #[test]
 fn the_derived_seed_is_frozen() {
     let (xi, _) = vault_at(0, 0);
-    assert_eq!(hex::encode(xi), "51a2aea74696ef4a879ed63f11158a490aea339982bbb9ddb14e12b146adb3ce", "xi moved: the BIP32 path or the xi construction changed");
+    assert_eq!(hex::encode(xi), "6fc0d827b40bd8467fabcf8e1267846e5bbff29b9061b5f240ea40de2664471f", "xi moved: the BIP32 path or the xi construction changed");
 }
 
 #[test]
@@ -72,12 +72,12 @@ fn the_public_key_is_frozen() {
     let (_, vault) = vault_at(0, 0);
     assert_eq!(
         hex::encode(vault.public_key.seed),
-        "b7c5c4213526b39ae667d2a2496a7a36",
+        "9aa2853c75b20987add78868dd57e58b",
         "PK.seed moved: the key derivation changed"
     );
     assert_eq!(
         hex::encode(vault.public_key.root),
-        "b3ef00bd74e2647b5cc89c4d5e168239",
+        "17dfcc757d3acd953c32e4a018f972ab",
         "PK.root moved: fips205 keygen changed, or it draws its seeds differently now"
     );
 }
@@ -87,21 +87,21 @@ fn the_redeem_script_is_frozen() {
     let (_, vault) = vault_at(0, 0);
     assert_eq!(vault.plan.blob_count(), 123, "the witness blob plan is part of the address");
     assert_eq!(vault.redeem_script().expect("script").len(), 89235, "the script changed size");
-    assert_eq!(script_hash(&vault), "177baf3e902f0cf28e7c715247185833216a516e50cbf5eabcc9a4d317527d4d", "the emitted script changed");
+    assert_eq!(script_hash(&vault), "1be135f2b5662ca16464af9fea870cc3848cb3950c5294be00e2da1c66c46376", "the emitted script changed");
 }
 
 #[test]
 fn the_address_is_frozen() {
     let (_, vault) = vault_at(0, 0);
-    assert_eq!(vault.address(Prefix::Testnet).expect("address").to_string(), "kaspatest:prda5x6zhu5up726rp8g089dawqffphf6az6p8au0nkapgytpghvvee2myufm");
-    assert_eq!(vault.address(Prefix::Mainnet).expect("address").to_string(), "kaspa:prda5x6zhu5up726rp8g089dawqffphf6az6p8au0nkapgytpghvvclvqtzcl");
+    assert_eq!(vault.address(Prefix::Testnet).expect("address").to_string(), "kaspatest:ppqqpksxdapwp5kc48pn6s88prgwlsh8sn76y63ma9mg76sdcjh269nc5wpy7");
+    assert_eq!(vault.address(Prefix::Mainnet).expect("address").to_string(), "kaspa:ppqqpksxdapwp5kc48pn6s88prgwlsh8sn76y63ma9mg76sdcjh26y470pl46");
 }
 
 /// Neighbouring indices, so an off-by-one in the path produces a failing test
 /// rather than a valid-looking address from the wrong branch.
 #[test]
 fn neighbouring_indices_are_frozen() {
-    for (account, index, expected) in [(0u32, 1u32, "kaspatest:pq7e4aghxztk6h498yuvhm2dtchcd94a8xcq297hmn7ker3w0s3z2dkcjqjyd"), (1, 0, "kaspatest:ppmnnjdsa6xjj993daxx889c76zzlcxf03yxa646glzdp5zmxt8dw32g55y5f")] {
+    for (account, index, expected) in [(0u32, 1u32, "kaspatest:pqakc5rlwdurn2j89npqzlnpe5n6xqqtqnwwj4ls25rj0vvu7qs427ecpdqpn"), (1, 0, "kaspatest:pz6zvzufdmpkly2hmfaq87t0t0t3x8cn9lplan27fdummvq37syeqgnugdd38")] {
         let (_, vault) = vault_at(account, index);
         assert_eq!(
             vault.address(Prefix::Testnet).expect("address").to_string(),

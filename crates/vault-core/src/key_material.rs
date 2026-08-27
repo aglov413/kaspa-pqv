@@ -30,7 +30,7 @@ use kaspa_bip32::{ExtendedPrivateKey, Language, Mnemonic, SecretKey};
 ///
 /// Deliberately distinct from [`crate::derivation::XI_DOMAIN`] so the two
 /// constructions can never produce the same vault from related inputs.
-pub const XI_DOMAIN_RAW: &[u8] = b"KaspaPQV-LMS-v1-rawkey";
+pub const XI_DOMAIN_RAW: &[u8] = b"KaspaPQV-v1-rawkey";
 
 /// A source of vault key material.
 pub enum KeyMaterial {
