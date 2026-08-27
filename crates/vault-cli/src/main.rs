@@ -396,8 +396,14 @@ fn usage() {
 async fn main() -> Result<()> {
     let args = parse_args()?;
     let env = EnvFile::load(args.env_file.as_deref().map(std::path::Path::new))?;
-    if let Some(path) = env.path() {
-        eprintln!("loaded {}", path.display());
+    // `artifacts` and `info` derive nothing from configured key material, so
+    // announcing a loaded .env there invites the reader to assume the addresses
+    // printed below came from *their* mnemonic. They did not.
+    let uses_key_material = !matches!(args.command.as_str(), "artifacts" | "info" | "help" | "--help" | "-h");
+    if uses_key_material {
+        if let Some(path) = env.path() {
+            eprintln!("loaded {}", path.display());
+        }
     }
 
     match args.command.as_str() {

@@ -54,6 +54,10 @@ pub fn cmd_artifacts() -> Result<()> {
     println!("so this output is reproducible by anyone. If your build prints something");
     println!("different, do not fund an address it generates.");
     println!();
+    println!("These are NOT your addresses. Your own key material is neither read nor");
+    println!("used here -- a build check cannot depend on a secret. To see the addresses");
+    println!("your mnemonic derives, use `slh-address` or `addresses`.");
+    println!();
     println!("rustc pinned        1.96.1   (rust-toolchain.toml)");
     println!("                    compare against `rustc --version`; a mismatch is not");
     println!("                    known to change the output, but is not assumed safe");
