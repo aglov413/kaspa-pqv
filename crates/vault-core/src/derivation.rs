@@ -85,11 +85,36 @@ pub enum Scheme {
     /// derived from the message, so nothing has to be remembered between
     /// signatures — including signatures the chain never sees.
     SlhDsaSha2_128s = 2,
+    /// SLH-DSA-SHA2-128-24, NIST SP 800-230 ipd. Stateless like `128s` and
+    /// limited to 2^24 signatures per key, which halves the signature.
+    SlhDsaSha2_128_24 = 3,
+    /// SLH-DSA-SHA2-128-24d2 — the same signature limit with `d = 2`, which
+    /// trades 1360 signature bytes for three orders of magnitude of signing
+    /// cost. **Not a standardised parameter set.**
+    SlhDsaSha2_128_24D2 = 4,
 }
 
 impl Scheme {
     pub const fn index(self) -> u32 {
         self as u32
+    }
+
+    /// Every scheme, for wallets that scan more than one branch.
+    pub const ALL: &'static [Scheme] = &[
+        Scheme::LmsSha256,
+        Scheme::SlhDsaSha2_128s,
+        Scheme::SlhDsaSha2_128_24,
+        Scheme::SlhDsaSha2_128_24D2,
+    ];
+
+    /// The name used on the command line and in reports.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Scheme::LmsSha256 => "LMS-SHA256",
+            Scheme::SlhDsaSha2_128s => "SLH-DSA-SHA2-128s",
+            Scheme::SlhDsaSha2_128_24 => "SLH-DSA-SHA2-128-24",
+            Scheme::SlhDsaSha2_128_24D2 => "SLH-DSA-SHA2-128-24d2",
+        }
     }
 }
 
@@ -234,6 +259,27 @@ mod tests {
 
         let slh = vault_path(Scheme::SlhDsaSha2_128s, 0, 0);
         assert_eq!(slh, "m/101110'/111111'/2'/0'/0'");
+
+        // The two 2^24-limited SLH-DSA sets get their own levels rather than
+        // sharing `2'`. Sharing would mean one seed generating two different
+        // key pairs under two different parameter sets — key material reused
+        // across schemes, which is the thing the `scheme'` level exists to
+        // prevent.
+        assert_eq!(vault_path(Scheme::SlhDsaSha2_128_24, 0, 0), "m/101110'/111111'/3'/0'/0'");
+        assert_eq!(vault_path(Scheme::SlhDsaSha2_128_24D2, 0, 0), "m/101110'/111111'/4'/0'/0'");
+    }
+
+    /// Every scheme has a distinct index and a distinct label. Both are
+    /// user-visible and both are how a wallet decides which branch a vault is
+    /// on; a duplicate in either is a vault looked up in the wrong place.
+    #[test]
+    fn scheme_indices_and_labels_are_unique() {
+        for (i, a) in Scheme::ALL.iter().enumerate() {
+            for b in &Scheme::ALL[i + 1..] {
+                assert_ne!(a.index(), b.index(), "{} and {} share an index", a.label(), b.label());
+                assert_ne!(a.label(), b.label());
+            }
+        }
     }
 
     /// The `scheme'` level is the only thing keeping two schemes derived from
@@ -247,18 +293,26 @@ mod tests {
     #[test]
     fn schemes_derive_independent_seeds_from_one_mnemonic() {
         let seed = [0x42u8; 64];
-        let lms = derive_xi(&seed, Scheme::LmsSha256, 0, 0).unwrap();
-        let slh = derive_xi(&seed, Scheme::SlhDsaSha2_128s, 0, 0).unwrap();
-        assert_ne!(lms, slh, "two schemes shared a keygen seed");
-        assert_ne!(Scheme::LmsSha256.index(), Scheme::SlhDsaSha2_128s.index());
 
-        // Independence has to hold across every account and key index, not
-        // just the first, or a wallet holding several vaults could collide.
+        // Independence has to hold for every pair of schemes and across every
+        // account and key index, not just the first, or a wallet holding
+        // several vaults could collide. The three SLH-DSA sets matter most
+        // here: they share a signature algorithm and differ only in constants,
+        // so a shared seed would be genuinely reused key material rather than
+        // merely two keys from one secret.
         for account in 0..3 {
             for index in 0..3 {
-                let a = derive_xi(&seed, Scheme::LmsSha256, account, index).unwrap();
-                let b = derive_xi(&seed, Scheme::SlhDsaSha2_128s, account, index).unwrap();
-                assert_ne!(a, b, "collision at account {account}, index {index}");
+                for (i, a) in Scheme::ALL.iter().enumerate() {
+                    for b in &Scheme::ALL[i + 1..] {
+                        assert_ne!(
+                            derive_xi(&seed, *a, account, index).unwrap(),
+                            derive_xi(&seed, *b, account, index).unwrap(),
+                            "{} and {} collided at account {account}, index {index}",
+                            a.label(),
+                            b.label()
+                        );
+                    }
+                }
             }
         }
     }

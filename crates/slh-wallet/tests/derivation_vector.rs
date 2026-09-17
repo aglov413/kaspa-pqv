@@ -6,9 +6,8 @@
 //! move without anyone noticing:
 //!
 //! 1. the BIP32 path and the `xi` construction (`vault-core::derivation`);
-//! 2. how `xi` becomes SLH-DSA key material — which depends on `fips205`
-//!    drawing three 16-byte values in a fixed order, an implementation detail
-//!    of a `pub(crate)` function;
+//! 2. how `xi` becomes SLH-DSA key material, and the parameter set it is
+//!    generated under;
 //! 3. the emitted redeem script, tens of thousands of opcodes of generator
 //!    output;
 //! 4. the witness blob plan, which sets how many slice sequences that script
@@ -31,6 +30,7 @@
 use kaspa_addresses::Prefix;
 use kaspa_bip32::{Language, Mnemonic};
 use sha2::{Digest, Sha256};
+use slh_script::params::SHA2_128S;
 use slh_wallet::{derive_xi, vault_path, Scheme, SlhVault};
 
 /// The BIP39 test vector everyone publishes. Deliberately worthless, and
@@ -46,7 +46,7 @@ fn seed() -> Vec<u8> {
 fn vault_at(account: u32, key_index: u32) -> ([u8; 32], SlhVault) {
     let xi =
         derive_xi(&seed(), Scheme::SlhDsaSha2_128s, account, key_index).expect("derivation");
-    let (vault, _) = SlhVault::from_xi(&xi).expect("keygen");
+    let (vault, _) = SlhVault::from_xi(&SHA2_128S, &xi).expect("keygen");
     (xi, vault)
 }
 
@@ -122,7 +122,7 @@ fn the_address_survives_a_cold_restore() {
     let m = Mnemonic::new(TEST_MNEMONIC, Language::English).unwrap();
     let restored_seed = hex::decode(m.create_seed(None)).unwrap();
     let xi = derive_xi(&restored_seed, Scheme::SlhDsaSha2_128s, 0, 0).unwrap();
-    let (restored, _) = SlhVault::from_xi(&xi).unwrap();
+    let (restored, _) = SlhVault::from_xi(&SHA2_128S, &xi).unwrap();
 
     assert_eq!(restored.address(Prefix::Testnet).unwrap(), expected);
 }

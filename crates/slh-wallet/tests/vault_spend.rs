@@ -14,6 +14,7 @@ use kaspa_consensus_core::tx::{
     ScriptPublicKey, ScriptVec, Transaction, TransactionOutput,
 };
 use kaspa_txscript::pay_to_script_hash_script;
+use slh_script::params::SHA2_128S;
 use slh_wallet::spend::{build_spend, preflight, verify, VaultUtxo};
 use slh_wallet::{derive_xi, Scheme, SlhVault, CANONICAL_OUTPUT_COUNT};
 use vault_core::binding::OutputView;
@@ -30,7 +31,7 @@ fn vault() -> (SlhVault, slh_wallet::Keypair) {
     let m = Mnemonic::new(TEST_MNEMONIC, Language::English).unwrap();
     let seed = hex::decode(m.create_seed(None)).unwrap();
     let xi = derive_xi(&seed, Scheme::SlhDsaSha2_128s, 0, 0).unwrap();
-    SlhVault::from_xi(&xi).unwrap()
+    SlhVault::from_xi(&SHA2_128S, &xi).unwrap()
 }
 
 fn utxo() -> VaultUtxo {
@@ -210,7 +211,7 @@ fn another_vaults_signature_is_rejected() {
     let m = Mnemonic::new(TEST_MNEMONIC, Language::English).unwrap();
     let seed = hex::decode(m.create_seed(None)).unwrap();
     let other_xi = derive_xi(&seed, Scheme::SlhDsaSha2_128s, 0, 1).unwrap();
-    let (other_vault, other_key) = SlhVault::from_xi(&other_xi).unwrap();
+    let (other_vault, other_key) = SlhVault::from_xi(&SHA2_128S, &other_xi).unwrap();
 
     // Sign with the other vault's key, then present it against this vault's
     // UTXO by swapping in this vault's redeem script.

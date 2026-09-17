@@ -2,12 +2,19 @@
 
 A vault is a pay-to-script-hash address whose redeem script verifies a
 **hash-based post-quantum signature** over a digest reconstructed from the
-spending transaction. Two signature schemes are defined:
+spending transaction. Four schemes are defined:
 
-| `scheme'` | scheme | standard | stateful |
-|---|---|---|---|
-| `1` | LMS `SHA256_M32_H15` / LMOTS `SHA256_N32_W2` | RFC 8554, NIST SP 800-208 | yes |
-| `2` | SLH-DSA-SHA2-128s | FIPS 205 | no |
+| `scheme'` | scheme | standard | stateful | signatures per key |
+|---|---|---|---|--:|
+| `1` | LMS `SHA256_M32_H15` / LMOTS `SHA256_N32_W2` | RFC 8554, NIST SP 800-208 | yes | 2^15 |
+| `2` | SLH-DSA-SHA2-128s | FIPS 205 | no | 2^64 |
+| `3` | SLH-DSA-SHA2-128-24 | NIST SP 800-230 **ipd** | no | 2^24 |
+| `4` | SLH-DSA-SHA2-128-24d2 | **none** | no | 2^24 |
+
+Schemes `3` and `4` do not have the standing scheme `2` does. SP 800-230 is an
+initial public draft; `128-24d2` is stated in this workspace and nowhere else.
+Both are specified, implemented and measured here on the same footing so that
+the comparison is real — see [§8.5](#85-security-level) before using either.
 
 > **Status: experimental, unaudited, testnet only.** This document describes
 > what is implemented and measured, not a standard. Everything here is
@@ -56,9 +63,16 @@ binding constraint on the SLH-DSA witness — see [§6.3](#63-witness-encoding).
 
 ```
 m / 101110' / 111111' / scheme' / account' / key_index'
-     purpose   coin      1 = LMS
-                         2 = SLH-DSA
+     purpose   coin      1 = LMS-SHA256
+                         2 = SLH-DSA-SHA2-128s
+                         3 = SLH-DSA-SHA2-128-24
+                         4 = SLH-DSA-SHA2-128-24d2
 ```
+
+Each parameter set gets its own `scheme'` level rather than sharing `2'`.
+Sharing would mean one seed generating two key pairs under two different
+parameter sets — key material reused across schemes, which is the thing this
+level exists to prevent.
 
 | constant | value | note |
 |---|---|---|
@@ -97,7 +111,8 @@ m/101110'/111111'/2'/0'/0'      <- every level hardened
   -> secp256k1 private key
      -> xi = SHA-256("KaspaPQV-v1" || ser256(k_child))
         -> SLH-DSA key pair
-           -> emit 89 KB redeem script   (public key baked in as constants)
+           -> emit 22-89 KB redeem script (public key baked in as constants;
+                                            size set by the parameter set)
               -> BLAKE2b-256(script)
                  -> bech32(ScriptHash, hash)    kaspa:pz...
 
@@ -142,7 +157,7 @@ integer mod the secp256k1 order and so is not uniform over 32 bytes, and the
 domain separator removes any ambiguity about *which* 32 bytes are meant.
 
 `XI_DOMAIN` separates *constructions*, not schemes: `scheme'` is already inside
-the path, so two schemes derived from one mnemonic reach this point with
+the path, so any two schemes derived from one mnemonic reach this point with
 different child keys. One tag is therefore correct for all of them, and is not
 named after any.
 
@@ -154,13 +169,11 @@ named after any.
 
 ### 2.4 SLH-DSA key material
 
-FIPS 205 defines `slh_keygen_internal(SK.seed, SK.prf, PK.seed)`, but the
-reference implementation keeps it private and exposes only a
-draws-from-an-RNG form. The three secrets are therefore derived and supplied
-through a seeded RNG:
+`slh_keygen_internal(SK.seed, SK.prf, PK.seed)` (FIPS 205 Algorithm 18) is
+called directly, with the three secrets derived from `xi`:
 
 ```
-KEY_DOMAIN = "KaspaPQV-SLH-DSA-SHA2-128s-v1"
+KEY_DOMAIN = "KaspaPQV-" || <parameter set name> || "-v1"
 
 SK.seed = SHA-256( KEY_DOMAIN || "sk.seed" || xi )[0..16]
 SK.prf  = SHA-256( KEY_DOMAIN || "sk.prf"  || xi )[0..16]
@@ -168,22 +181,29 @@ PK.seed = SHA-256( KEY_DOMAIN || "pk.seed" || xi )[0..16]
 ```
 
 Three independent hashes rather than one 48-byte stream, so a change to how one
-field is derived cannot shift the others.
+field is derived cannot shift the others. `KEY_DOMAIN` names the parameter set,
+so one `xi` cannot produce two sets' key material — redundant with the `scheme'`
+level, deliberately.
 
-**This makes the address depend on an implementation detail**: that keygen
-draws `SK.seed`, then `SK.prf`, then `PK.seed`, 16 bytes each, and nothing
-else. Three things guard it:
+The three tags in use are `KaspaPQV-SLH-DSA-SHA2-128s-v1`,
+`KaspaPQV-SLH-DSA-SHA2-128-24-v1` and `KaspaPQV-SLH-DSA-SHA2-128-24d2-v1`.
 
-1. `fips205` is pinned to **`=0.4.1`** exactly.
-2. The seeded RNG has a fixed **48-byte budget and errors past it**, so a
-   version that draws a different *amount* fails loudly rather than producing an
-   unrecoverable vault.
-3. Keygen asserts the budget was fully consumed and that `PK.seed` came back
-   verbatim in the public key, which pins the *order* as well as the total.
+**The address depends on the seeds and the parameter set, and on nothing else.**
+That was not always true. `fips205` keeps `slh_keygen_internal` private and
+exposes only a draws-from-an-RNG form, so this wallet used to derive its key by
+feeding that function an RNG returning exactly the bytes above — which made
+every vault address depend on the order and size of three random draws inside a
+third-party crate. `slh-script`'s own signer replaced it. `fips205` remains as
+the oracle the `128s` instantiation is held against key-for-key and
+signature-for-signature, which is a better job for it: a disagreement now fails
+a test instead of moving a funded address.
 
-Signing is deterministic (`hedged = false`, so `opt_rand = PK.seed`) and draws
-no randomness at all; the signer passes an RNG that refuses every request rather
-than linking an OS RNG into a cold-storage path.
+The frozen derivation vectors confirm the change moved nothing: the `128s`
+address, public key and redeem script are byte-identical across the switch.
+
+Signing is deterministic (`opt_rand = PK.seed`, the unhedged variant) and draws
+no randomness at all, so a cold signer needs no entropy source and a rebuilt
+spend reproduces byte for byte.
 
 ---
 
@@ -291,6 +311,13 @@ A vault address is an ordinary P2SH address. Kaspa has three address versions
 (`PubKey`, `PubKeyECDSA`, `ScriptHash`) and a vault is the third, so **no wallet
 can label it as post-quantum**; the marker lives only in the holder's records.
 
+Nor does anything in the address say which **parameter set** it belongs to, and
+the public key cannot say either — all three SLH-DSA sets have a 32-byte public
+key. The set reaches the address only through `emit`, so two sets over one key
+are two addresses, and a spend built for the wrong one fails against the script
+after the coins have been sent. The set belongs in the holder's records
+alongside the address.
+
 The script hash is BLAKE2b-**256**, so the address commits to 256 bits and
 carries no quantum weakness of its own (Grover gives ~2^128).
 
@@ -323,42 +350,85 @@ leaf `q+1`, because leaf `q` is burned by the spend.
 
 ---
 
-## 6. SLH-DSA-SHA2-128s (`scheme' = 2`)
+## 6. SLH-DSA (`scheme' = 2`, `3`, `4`)
 
 ### 6.1 Parameters
 
-FIPS 205 Table 2, security category 1.
+Three parameter sets, all SHA-2 at security category 1. One verifier emitter
+serves all three; they differ only in the constants below.
 
-| | |
-|---|--:|
-| `n` | 16 |
-| `h` / `d` / `h'` | 63 / 7 / 9 |
-| `a` / `k` | 12 / 14 |
-| `lg_w` / `w` | 4 / 16 |
-| `len1` / `len2` / `len` | 32 / 3 / 35 |
-| `m` | 30 |
-| public key | 32 bytes |
-| signature | 7,856 bytes (491 × 16) |
+| | `128s` | `128-24` | `128-24d2` |
+|---|--:|--:|--:|
+| `scheme'` | 2 | 3 | 4 |
+| source | FIPS 205 Table 2 | SP 800-230 ipd Table 1 | **none** |
+| signature limit | 2^64 | 2^24 | 2^24 |
+| `n` | 16 | 16 | 16 |
+| `h` / `d` / `h'` | 63 / 7 / 9 | 22 / 1 / 22 | 24 / 2 / 12 |
+| `a` / `k` | 12 / 14 | 24 / 6 | 14 / 11 |
+| `lg_w` / `w` | 4 / 16 | 2 / 4 | 2 / 4 |
+| `len1` / `len2` / `len` | 32 / 3 / 35 | 64 / 4 / 68 | 64 / 4 / 68 |
+| `m` | 30 | 21 | 24 |
+| public key | 32 bytes | 32 bytes | 32 bytes |
+| signature | 7,856 B (491 × 16) | 3,856 B (241 × 16) | 5,216 B (326 × 16) |
 
-`128s`, not `128f`. Worst-case `F`/`H` invocations follow from the parameter
-sets, so the comparison is arithmetic rather than measurement:
+Every derived length is computed from FIPS 205 §11's formulas rather than
+copied from a table, and checked against the two published tables
+(`params::derived_lengths_match_the_published_tables`).
+
+**`128-24d2` is not a standard.** It appears in no NIST document. It is
+implemented, tested and measured here on exactly the same footing as the other
+two so that the comparison is real, and it carries none of their security
+analysis. Do not present it as standardised.
+
+#### Why a 2^24 signature limit is not a constraint here
+
+FIPS 205 sizes every standard set for 2^64 signatures under one key. A vault
+spending once a day reaches 2^24 in roughly 45,000 years. SP 800-230 (initial
+public draft, April 2026) proposes sets that buy that unused headroom back as
+signature size, for exactly the "sign-once, verify-many" case a vault is.
+
+#### Verification work
+
+Worst-case `F`/`H` invocations follow from the parameters, so this part is
+arithmetic rather than measurement:
 
 ```
 FORS      k(1 + a) + 1
 hypertree d[ len(w-1) + 1 + h' ]
 H_msg     2                              (two SHA-256 calls)
 
-128s   d=7,  h'=9,  a=12, k=14    183 +  3,745 + 2 =  3,930
-128f   d=22, h'=3,  a=6,  k=33    232 + 11,638 + 2 = 11,872
+128s      d=7,  h'=9,  a=12, k=14, w=16   183 + 3,745 + 2 = 3,930
+128-24    d=1,  h'=22, a=24, k=6,  w=4    151 +   227 + 2 =   380
+128-24d2  d=2,  h'=12, a=14, k=11, w=4    166 +   434 + 2 =   602
+128f      d=22, h'=3,  a=6,  k=33, w=16   232 + 11,638 + 2 = 11,872
 ```
 
-Three times the verification work, because `f` trades hypertree depth for
-signing speed — 22 layers of full WOTS+ verification against 7. Fast signing and
-slow verification is the wrong side of that trade when verification is the
-on-chain cost and signing happens once, offline.
+`w = 4` is what moves the hypertree column: a chain is at most three hashes
+instead of fifteen, and paying for that in `len` (68 chains instead of 35) costs
+signature bytes, which the 2^24 limit has already bought back. `128f` is listed
+to be excluded — it trades hypertree depth for signing speed, which is the wrong
+side of the trade when verification is the on-chain cost.
 
-The measured figure for `128s` is lower than 3,930 because chain steps are
-gated: a spend executes roughly half the emitted steps ([§6.4](#64-verifier-structure)).
+The measured figures are lower than these ceilings because chain steps are
+gated: a spend executes roughly half the emitted steps
+([§6.4](#64-verifier-structure)).
+
+#### Signing work
+
+The same parameters run the other way on the signer, and this is the axis
+`128-24` loses on badly. One signature needs `2^h'` WOTS+ public keys per
+hypertree layer, each `len` chains of `w - 1` hashes:
+
+| | leaves per tree | hashes per signature | measured keygen | measured signing |
+|---|--:|--:|--:|--:|
+| `128s` | 512 | ~4 million | 0.08 s | 0.52 s |
+| `128-24` | 4,194,304 | ~1.5 billion | **~100 s** | **23 s** |
+| `128-24d2` | 4,096 | ~2 million | 0.09 s | 0.20 s |
+
+Measured on six cores with the constant first hash block precomputed once per
+key. `128-24`'s column is `d = 1` doing exactly what `d = 1` does, and it is the
+reason `128-24d2` is carried alongside it: same signature limit, same `w`, three
+orders of magnitude less signing, for 1,360 more signature bytes.
 
 ### 6.2 Compressed ADRS
 
@@ -382,17 +452,42 @@ requires an explicit byte reversal in script.
 `setTypeAndClear` zeroes all three words. Tree height aliases **word 2**, not
 word 1; writing it where the key pair address lives is silent.
 
-Types: `WOTS_HASH 0`, `WOTS_PK 1`, `TREE 2`, `FORS_TREE 3`, `FORS_ROOTS 4`.
+Types: `WOTS_HASH 0`, `WOTS_PK 1`, `TREE 2`, `FORS_TREE 3`, `FORS_ROOTS 4`. A
+signer additionally uses `WOTS_PRF 5` and `FORS_PRF 6`, which no verifier ever
+sees; they share this type field's namespace, so they are defined alongside
+rather than separately.
+
+The ADRS layout is the same for all three parameter sets, but two of its field
+*widths* are not, because they are chosen to hold the largest index each set
+addresses under `OpNum2Bin`'s sign-magnitude encoding:
+
+| | FORS tree index | XMSS tree index |
+|---|--:|--:|
+| `128s` | 3 bytes (`k·2^a` = 57,344) | 2 bytes (`2^h'` = 512) |
+| `128-24` | 4 bytes (100,663,296) | 3 bytes (4,194,304) |
+| `128-24d2` | 3 bytes (180,224) | 2 bytes (4,096) |
+
+The remaining bytes of each 4-byte word are literal zeros. A width one byte too
+narrow produces a script that works for small indices and fails for large ones —
+i.e. for some messages and not others.
+
+With `d = 1` there is no tree index in the digest at all (`h - h/d = 0`), so
+`128-24`'s ADRS carries eight constant zero bytes there and the emitter pushes
+them as a literal rather than converting a runtime zero.
 
 ### 6.3 Witness encoding
 
-A signature is 491 `n`-byte elements and `MAX_STACK_SIZE` is **244, counting
-both stacks**. Elements cannot be pushed individually.
+A signature is 241 to 491 `n`-byte elements and `MAX_STACK_SIZE` is **244,
+counting both stacks**. Elements cannot be pushed individually under any of the
+three sets — `128-24`'s 241 elements are under the limit on their own, and then
+are not once the verifier's working frame and the digest are on the stack with
+them. Three elements of headroom is not a margin to build an address on.
 
-The signature is pushed as **123 blobs of 4 elements** (`BLOB_ELEMS = 4`), in
-signature order. The verifier's prologue moves them to the alt stack — which
-reverses them into a queue — and slices each blob when reached, pushing its
-elements back above the remaining blobs so they pop in order.
+The signature is pushed as blobs of 4 elements (`BLOB_ELEMS = 4`), in signature
+order: **123 blobs** for `128s`, **61** for `128-24`, **82** for `128-24d2`.
+The verifier's prologue moves them to the alt stack — which reverses them into a
+queue — and slices each blob when reached, pushing its elements back above the
+remaining blobs so they pop in order.
 
 Cost model, verified against the engine: `OpSubstr` is charged only for the
 substring it produces and inter-stack moves are free, but `OpSubstr` *consumes*
@@ -401,9 +496,11 @@ elements from one blob costs `16·e·(e+1)`; across `E` elements in blobs of `e`
 that is `16·E·(e+1)` — **linear in blob size, not quadratic in the signature**.
 
 `BLOB_ELEMS` is part of the redeem script and therefore part of the address.
-Measured sweep. **These are the bare verifier**, which takes its message from
-the witness; a vault script is 42 bytes larger because it emits the binding
-digest instead ([§11](#11-measured-costs) quotes the vault figure, 89,235):
+Measured sweep, on `128s` — the set with the most elements to place, and so the
+one the choice is bound by. **These are the bare verifier**, which takes its
+message from the witness; a vault script is 42 bytes larger because it emits the
+binding digest instead ([§11](#11-measured-costs) quotes the vault figure,
+89,235):
 
 | elems | blobs | redeem B | script units | peak stack |
 |--:|--:|--:|--:|--:|
@@ -421,25 +518,41 @@ Both ends fail against the 244-item limit.
 ```
 prologue    move witness blobs to the alt stack
 binding     reconstruct D from introspection            (§3)
-H_msg       two SHA-256 calls -> a 30-byte digest
+H_msg       two SHA-256 calls -> an m-byte digest
 indices     md, idx_tree, idx_leaf carved from digest
-FORS        14 trees x (1 leaf hash + 12-node path), then T_k
-hypertree    7 layers x (35 Winternitz chains + 9-node path)
+FORS        k trees x (1 leaf hash + a-node path), then T_k
+hypertree   d layers x (len Winternitz chains + h'-node path)
 epilogue    compare against the pinned PK.root
 ```
 
+Per set, that is:
+
+| | FORS | hypertree |
+|---|---|---|
+| `128s` | 14 × (1 + 12) | 7 × (35 chains + 9) |
+| `128-24` | 6 × (1 + 24) | 1 × (68 chains + 22) |
+| `128-24d2` | 11 × (1 + 14) | 2 × (68 chains + 12) |
+
 `H_msg` for the SHA2 parameter sets is an inner SHA-256 followed by one
-MGF1-SHA-256 block; `m` is 30 and MGF1 emits 32 per block, so the counter is
-always zero and the loop unrolls to nothing.
+MGF1-SHA-256 block; `m` is 30, 21 or 24 and MGF1 emits 32 per block, so the
+counter is always zero and the loop unrolls to nothing for every set.
 
 The signed message is `M' = toByte(0,1) || toByte(|ctx|,1) || ctx || D`. The
 vault uses an **empty context**, so the prefix is two zero bytes. Omitting them
 produces a self-consistent scheme that no standards-conforming implementation
 can verify.
 
-Winternitz chain length depends on a message digit, so all 15 steps are emitted
-and gated on `digit <= step`. Untaken `OpIf` branches cost script *bytes* and
-zero script *units*, so a spend pays worst-case size for average-case compute.
+Winternitz chain length depends on a message digit, so all `w - 1` steps are
+emitted and gated on `digit <= step` — 15 under `128s`, 3 under the `w = 4`
+sets. Untaken `OpIf` branches cost script *bytes* and zero script *units*, so a
+spend pays worst-case size for average-case compute.
+
+The WOTS+ checksum digits follow FIPS 205's shift-to-a-byte-boundary and
+`base_2b` construction. Under `128s` the checksum spans 12 bits and its digits
+are the nibbles of `csum << 4`; under the `w = 4` sets it spans 8 bits and its
+four digits are 2-bit fields of `csum` itself. Reading the first as "take the
+nibbles" and carrying that to the second gives a verifier that is
+self-consistent and rejects every real signature.
 
 Merkle sibling order depends on an index bit, so both orders are emitted; the
 branch is a single `OpSwap`, since `H(pfx || a || b)` and `H(pfx || b || a)`
@@ -509,7 +622,7 @@ vault — but it is a bound, not a fix.
 *fixed* subtree root determined at keygen, and the leaf index comes from
 `H_msg` over 2^63 positions rather than a counter. One-time keys are still used
 exactly once; the construction arranges that reuse cannot arise. If a vault must
-sign anything that is not a transaction, use `scheme' = 2`.
+sign anything that is not a transaction, use one of the SLH-DSA schemes.
 
 ### 8.2 Output value floors
 
@@ -551,10 +664,29 @@ transaction is rebuilt and re-signed.
 
 ### 8.5 Security level
 
-SLH-DSA-128s is NIST category 1. FIPS 205 approves it; SP 800-208 has no
-category 1 parameter set for *stateful* hash-based signatures, which is why
-stateful designs land at category 3. Whether a decade-scale vault should use
+All three SLH-DSA sets are NIST category 1. FIPS 205 approves `128s`; SP 800-208
+has no category 1 parameter set for *stateful* hash-based signatures, which is
+why stateful designs land at category 3. Whether a decade-scale vault should use
 `192s` instead is [open](#10-open-questions).
+
+**The three sets do not have equal standing, and the difference is not
+cryptographic strength — it is who has analysed them.**
+
+- `128s` is standardised. FIPS 205 states its security, and an independent
+  implementation reproduces this one key-for-key.
+- `128-24` comes from SP 800-230, an **initial public draft**. Its security
+  analysis is NIST's, and its numbers can change before the document is final.
+  If they do, addresses funded under it are spendable only by this code.
+- `128-24d2` has **no** analysis behind it. It is a parameter set stated in this
+  workspace and nowhere else. It is implemented and measured on equal footing so
+  the comparison is real; that is not the same as it being sound.
+
+Both 2^24 sets also carry a limit `128s` does not: **2^24 signatures per key,
+counting every signature, including ones the chain never sees**. For a vault
+that limit is not reachable in any plausible lifetime — a spend a day exhausts
+it in about 45,000 years — but it is a limit, and a key used as a general-purpose
+signing key rather than as a vault could reach it. Nothing in this code counts
+signatures or enforces the cap.
 
 ---
 
@@ -564,13 +696,18 @@ A vault address is the hash of a script this workspace **compiles**. An
 independent build that differs by one byte derives a different address from the
 same mnemonic, and anyone funding it loses the coins with no error anywhere.
 
-- `Cargo.lock` is committed; `fips205` and `oxicrypt-lms` are pinned exactly.
+- `Cargo.lock` is committed; `oxicrypt-lms` is pinned exactly, and `fips205` —
+  now a dev-dependency rather than something an address passes through — is
+  pinned so the oracle cannot drift either.
 - `rust-toolchain.toml` pins the compiler.
-- Frozen vectors pin mnemonic → xi → public key → script hash → address for both
-  schemes, and the binding digest independently.
+- Frozen vectors pin mnemonic → xi → public key → script hash → address for
+  every scheme, and the binding digest independently.
 - `kaspa-vault artifacts` prints every address-affecting value, derived from the
   published BIP39 test mnemonic. It takes no key material and touches no
-  network.
+  network. It skips `SLH-DSA-SHA2-128-24`'s key, whose 2^22 WOTS+ public keys
+  put it at about a hundred seconds; `kaspa-vault slh-address --set 128-24`
+  reproduces that one on demand, and its *script* — the part a build can change
+  — is frozen and checked on every test run without a key at all.
 
 Any difference in that output is a compatibility break.
 
@@ -588,13 +725,27 @@ identical.
 
 ## 10. Open questions
 
-**Multi-input.** Both redeem scripts assume exactly one vault input, so UTXOs
-cannot be consolidated: five received payments are five separate 97 KB spends.
+**Multi-input.** Every redeem script assumes exactly one vault input, so UTXOs
+cannot be consolidated: five received payments are five separate spends.
 Fixing this means a different unrolled script and probably a distinct address
 type.
 
 **Security level.** `128s` (category 1) versus `192s` for a decade-scale vault,
-against roughly double the on-chain cost.
+against roughly double the on-chain cost. SP 800-230 proposes `192-24` and
+`256-24` as well, on the same 2^24 trade as `128-24`; neither is implemented
+here, and `192-24` is the obvious thing to measure next if category 3 is wanted.
+
+**Whether either 2^24 set should be used at all.** `128-24` is a draft NIST may
+still change, and `128-24d2` is nobody's proposal. They are implemented and
+measured so the question can be answered with numbers rather than guesses; the
+numbers say the on-chain saving is large ([§11](#11-measured-costs)) and say
+nothing about whether the standards process will land where the draft is now.
+
+**Whether `d = 1` is acceptable for a vault.** `128-24` costs about 100 seconds
+to generate a key and 23 to sign, on six cores; a confirmed spend took 2m05s
+wall clock. That is the draft's deliberate
+trade for "sign-once, verify-many", and a vault signer is not a build server.
+`128-24d2` prices the alternative but carries no analysis.
 
 **KIP registration.** `PURPOSE = 101110'` and the `scheme'` assignments are
 chosen, not registered. `Derivation` carries the purpose as a field so two
@@ -611,25 +762,93 @@ derivation.
 
 ## 11. Measured costs
 
-Testnet-10, confirmed spends.
+### 11.1 Confirmed on-chain
 
-| | SLH-DSA-SHA2-128s | LMS h=15 w=2 |
-|---|--:|--:|
-| redeem script | 89,235 B | 19,717 B |
-| transaction | 97,472 B | 24,890 B |
-| script units | 1,330,069 | 373,146 |
-| compute budget | 136 | 40 |
-| normalized mass | 194,944 | 49,780 |
-| fee | 0.2339 TKAS | 0.0597 TKAS |
-| spends per block | 2 | ~10 |
-| key generation | 0.18 s | 5.96 s |
+Testnet-10, confirmed spends. All four schemes have spent.
 
-Transient mass dominates both: a vault spend is large but cheap to verify, so
-the honest optimisation target is script **bytes**, not script units.
+| | `128s` | `128-24` | `128-24d2` | LMS h=15 w=2 |
+|---|--:|--:|--:|--:|
+| redeem script | 89,235 B | 21,752 B | 29,197 B | 19,717 B |
+| transaction | 97,472 B | 25,925 B | 34,751 B | 24,890 B |
+| script units | 1,330,069 | 267,546 / 267,553 | 402,185 / 403,473 | 373,146 |
+| compute budget | 136 | 29 | 43 | 40 |
+| normalized mass | 194,944 | 51,850 | 69,502 | 49,780 |
+| fee | 0.2339 TKAS | 0.0622 TKAS | 0.0834 TKAS | 0.0597 TKAS |
+| fee floor | 0.1949 TKAS | 0.0519 TKAS | 0.0695 TKAS | 0.0498 TKAS |
+| spends per block | 2 | 9 | 7 | ~10 |
+
+Each pair of unit counts is two spends of the **same key**, one spending the
+other's change. Chain length depends on the message digit, so the count moves;
+each pair fits one budget, which is what the margin in `BUDGET_MARGIN_UNITS` is
+for.
+
+`SLH-DSA-SHA2-128-24` is **cheaper to verify than LMS** — 267,546 units against
+373,146 — at 1.04x its transaction bytes. That is a stateless post-quantum
+signature costing about 4% more than a stateful one, on a live chain, with no
+consensus change.
+
+The measured figures agree with §11.2's harness numbers to within one
+transaction byte and two units of normalized mass, for both 2^24 sets. That is
+the claim this workspace is organised around — that a measurement against
+`TxScriptEngine` and `MassCalculator` with a fabricated UTXO is the number a
+node will charge — and it is now checked rather than assumed.
+
+### 11.2 All four, measured in one process
+
+Same spend shape (one input, two standard outputs), same `TxScriptEngine`, same
+`MassCalculator` with testnet parameters, same funding amount. Nothing here is
+quoted from a previous session, and the compute budget on every row is the one
+that row's own signature needs:
+
+| | stateful | signatures | redeem B | sigscript | tx bytes | units | norm mass | per block | fee TKAS |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| LMS h=15 w=2 | yes | 2^15 | 19,717 | 24,637 | 24,891 | 375,226 | 49,782 | 10 | 0.0498 |
+| SLH-DSA-SHA2-128s | no | 2^64 | 89,235 | 97,219 | 97,473 | 1,285,456 | 194,946 | 2 | 0.1949 |
+| SLH-DSA-SHA2-128-24 | no | 2^24 | 21,752 | 25,672 | 25,926 | 266,270 | 51,852 | 9 | 0.0519 |
+| SLH-DSA-SHA2-128-24d2 | no | 2^24 | 29,197 | 34,498 | 34,752 | 403,439 | 69,504 | 7 | 0.0695 |
+
+`SLH-DSA-SHA2-128-24` costs **1.04x LMS's transaction bytes and fewer script
+units than LMS** — a stateless scheme at a stateful scheme's price. On this
+chain, at these parameters, statelessness costs about 4%.
+
+The redeem script falls further than the signature does: 4.1x against 2.0x. The
+script is dominated by emitted Winternitz chain steps, `d·len·(w-1)` — **3,675**
+for `128s`, **204** for `128-24`, **408** for `128-24d2` — so `lg(w)` moving from
+4 to 2 is what moves the script, and it is paid for in `len`, i.e. in the
+signature bytes the 2^24 limit had already bought back.
+
+Transient mass dominates every row: a vault spend is large but cheap to verify,
+so the honest optimisation target is script **bytes**, not script units.
+
+### 11.3 Signer cost
+
+Six cores, midstate precomputed once per key, leaves built in parallel.
+
+| | keygen | signing | leaves per tree |
+|---|--:|--:|--:|
+| SLH-DSA-SHA2-128s | 0.08 s | 0.52 s | 512 |
+| SLH-DSA-SHA2-128-24 | **~100 s** | **23 s** | 4,194,304 |
+| SLH-DSA-SHA2-128-24d2 | 0.09 s | 0.20 s | 4,096 |
+| LMS h=15 w=2 | 5.96 s | 0.02 s | 32,768 |
+
+`128-24`'s column is `d = 1`, and it is the one axis on which it is the worst of
+the four.
+
+### 11.4 Confirmed transactions
 
 ```
-SLH-DSA  4f4f96c2494d741b3cc0f30bde3a15faa956bbdfeed60ba184cbef185dc2cd6c
-SLH-DSA  25a8dc25735ec649f3d99379f969c5c7761d8546514c783050b34c5ad6c8d3d4   spends the above's change
-LMS      9df246be429549dfd7635f2c95c6fed580f491632db9ee5777a9fab22fce755a
-LMS      7dd3834583a9b501f969420b4aff1b7ef6fe51b8151463ba30672fa2671e0a00
+scheme' = 2   4f4f96c2494d741b3cc0f30bde3a15faa956bbdfeed60ba184cbef185dc2cd6c
+scheme' = 2   25a8dc25735ec649f3d99379f969c5c7761d8546514c783050b34c5ad6c8d3d4   spends the above's change
+scheme' = 2   3197116e1b8008111b94fddc8595d35d0a79676dbbfb3696dc231427d6a60c54   funds a scheme' = 4 vault
+scheme' = 4   4a83c79e6cfa8b058bfd3dc37e5ba0ad4f2518e3ba5fb8b5aafb6e652bc10969
+scheme' = 4   bf6c80e79ca9c6443420f49fa75f53864754a17f00289bf1c10f0c7311d4a3c9   spends the above's change
+scheme' = 4   da02dcc107c180f756acaba1fe18d4bcdf9f1b8c60a08b167a202ad213d6b04d   funds a scheme' = 3 vault
+scheme' = 3   7d74a4308bf2a7379fb3602ec947722eb890ba83f8e63347381aa7f7c7e89e45
+scheme' = 3   586e6e019603a3eead40b924da31359146129af924c553e0f738ef86263cfe08   spends the above's change
+scheme' = 1   9df246be429549dfd7635f2c95c6fed580f491632db9ee5777a9fab22fce755a
+scheme' = 1   7dd3834583a9b501f969420b4aff1b7ef6fe51b8151463ba30672fa2671e0a00
 ```
+
+Each stateless pair is one key signing two different messages from one address,
+the second spending the first's change. Each stateless scheme funded the next,
+so the chain of custody runs `2 -> 4 -> 3` entirely through vault addresses.

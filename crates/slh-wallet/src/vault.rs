@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use kaspa_addresses::{Address, Prefix};
 use kaspa_txscript::pay_to_script_hash_script;
+use slh_script::params::Params;
 use slh_script::witness::BlobPlan;
 use slh_script::{build_vault_script, PublicKey};
 
@@ -19,15 +20,22 @@ use crate::keygen::{keypair_from_xi, Keypair};
 /// because the current one is burned.
 pub const CANONICAL_OUTPUT_COUNT: usize = 2;
 
-/// A vault, identified by its SLH-DSA public key.
+/// A vault, identified by its SLH-DSA public key **and its parameter set**.
+///
+/// The set is not recoverable from the key — every supported set has a 32-byte
+/// public key — so it is carried explicitly here, and it reaches the address
+/// through the redeem script the emitter builds for it. Two vaults with the
+/// same key under different sets are different addresses holding different
+/// coins, and neither can spend the other's.
 #[derive(Clone, Debug)]
 pub struct SlhVault {
+    pub p: &'static Params,
     pub public_key: PublicKey,
     /// How the signature is cut into witness blobs.
     ///
     /// Part of the address: the redeem script contains one slice sequence per
     /// blob, so changing this changes the script hash. Frozen at
-    /// [`BlobPlan::default`] and pinned by the derivation vector.
+    /// [`BlobPlan::for_params`] and pinned by the derivation vectors.
     pub plan: BlobPlan,
 }
 
@@ -37,9 +45,14 @@ impl SlhVault {
     /// The secret is returned separately and should be held only for as long as
     /// a signature takes. Unlike LMS there is no state attached to it, so
     /// dropping and re-deriving it is free.
-    pub fn from_xi(xi: &[u8; 32]) -> Result<(Self, Keypair)> {
-        let keypair = keypair_from_xi(xi)?;
-        Ok((Self { public_key: keypair.public, plan: BlobPlan::default() }, keypair))
+    pub fn from_xi(p: &'static Params, xi: &[u8; 32]) -> Result<(Self, Keypair)> {
+        let keypair = keypair_from_xi(p, xi)?;
+        Ok((Self { p, public_key: keypair.public, plan: BlobPlan::for_params(p) }, keypair))
+    }
+
+    /// A watch-only vault, from a recorded public key.
+    pub fn from_public_key(p: &'static Params, public_key: PublicKey) -> Self {
+        Self { p, public_key, plan: BlobPlan::for_params(p) }
     }
 
     /// The redeem script.
@@ -75,10 +88,11 @@ impl SlhVault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slh_script::params::{SHA2_128S, SHA2_128_24_D2};
 
     #[test]
     fn a_vault_has_exactly_one_address() {
-        let (vault, _) = SlhVault::from_xi(&[0x21; 32]).unwrap();
+        let (vault, _) = SlhVault::from_xi(&SHA2_128S, &[0x21; 32]).unwrap();
         let a = vault.address(Prefix::Testnet).unwrap();
         let b = vault.address(Prefix::Testnet).unwrap();
         assert_eq!(a, b);
@@ -89,10 +103,10 @@ mod tests {
     /// Each of these silently moving an address is a way to lose coins.
     #[test]
     fn the_address_depends_on_the_key_the_shape_and_the_blob_plan() {
-        let (vault, _) = SlhVault::from_xi(&[0x21; 32]).unwrap();
+        let (vault, _) = SlhVault::from_xi(&SHA2_128S, &[0x21; 32]).unwrap();
         let base = vault.redeem_script().unwrap();
 
-        let (other, _) = SlhVault::from_xi(&[0x22; 32]).unwrap();
+        let (other, _) = SlhVault::from_xi(&SHA2_128S, &[0x22; 32]).unwrap();
         assert_ne!(other.redeem_script().unwrap(), base, "key must change the script");
 
         assert_ne!(
@@ -101,7 +115,8 @@ mod tests {
             "output count must change the script"
         );
 
-        let repacked = SlhVault { plan: BlobPlan::new(5).unwrap(), ..vault.clone() };
+        let repacked =
+            SlhVault { plan: BlobPlan::new(&SHA2_128S, 5).unwrap(), ..vault.clone() };
         assert_ne!(
             repacked.redeem_script().unwrap(),
             base,
@@ -109,11 +124,26 @@ mod tests {
         );
     }
 
+    /// The parameter set is part of the address. The same public key under two
+    /// sets must not produce one address, or a spend built for one set would
+    /// be presented against the other's script and simply fail — with coins
+    /// already sent.
+    #[test]
+    fn the_parameter_set_is_part_of_the_address() {
+        let (a, _) = SlhVault::from_xi(&SHA2_128S, &[0x21; 32]).unwrap();
+        let shared_key = SlhVault::from_public_key(&SHA2_128_24_D2, a.public_key);
+        assert_ne!(
+            shared_key.redeem_script().unwrap(),
+            a.redeem_script().unwrap(),
+            "two parameter sets produced the same script for one key"
+        );
+    }
+
     /// Mainnet and testnet addresses differ only by prefix, so a mistyped
     /// network sends coins somewhere unrecoverable rather than failing.
     #[test]
     fn network_prefix_is_carried_through() {
-        let (vault, _) = SlhVault::from_xi(&[0x21; 32]).unwrap();
+        let (vault, _) = SlhVault::from_xi(&SHA2_128S, &[0x21; 32]).unwrap();
         let tn = vault.address(Prefix::Testnet).unwrap();
         let mn = vault.address(Prefix::Mainnet).unwrap();
         assert_ne!(tn.to_string(), mn.to_string());

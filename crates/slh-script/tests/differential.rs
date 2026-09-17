@@ -18,26 +18,29 @@ use slh_script::reference::{self, Signature};
 use slh_script::witness::BlobPlan;
 
 mod common;
-use common::{signed, verify_script_with_witness as spend_script};
+use common::{signed, verify_script_with_witness as spend_script, FAST_SETS};
 
 /// Independent keys and messages, so the emitted script runs against a wide
 /// spread of hypertree positions, index bits and Winternitz chain lengths
 /// rather than one lucky path.
 #[test]
 fn many_independent_signatures_verify() {
-    let plan = BlobPlan::default();
-    for round in 0..6u8 {
-        let message = [round.wrapping_mul(37).wrapping_add(11); 32];
-        let (pk, sig) = signed(round, &message);
+    for set in FAST_SETS {
+        let plan = BlobPlan::for_params(set);
+        for round in 0..6u8 {
+            let message = [round.wrapping_mul(37).wrapping_add(11); 32];
+            let (pk, sig) = signed(set, round, &message);
 
-        // The shadow verifier and the script must agree with fips205 and with
-        // each other on the same inputs.
-        let parsed = Signature::from_bytes(&sig).expect("parse");
-        let trace = reference::verify_traced(&pk, &parsed, &message);
-        assert_eq!(trace.root, pk.root, "reference rejected round {round}");
+            // The shadow verifier and the script must agree with each other on
+            // the same inputs, and for `128s` both are pinned to `fips205` by
+            // `reference_oracle.rs`.
+            let parsed = Signature::from_bytes(set, &sig).expect("parse");
+            let trace = reference::verify_traced(&pk, &parsed, &message);
+            assert_eq!(trace.root, pk.root, "{}: reference rejected round {round}", set.name);
 
-        execute(&spend_script(&pk, &plan, &sig, &message))
-            .unwrap_or_else(|e| panic!("script rejected round {round}: {e}"));
+            execute(&spend_script(&pk, &plan, &sig, &message))
+                .unwrap_or_else(|e| panic!("{}: script rejected round {round}: {e}", set.name));
+        }
     }
 }
 
@@ -50,32 +53,44 @@ fn many_independent_signatures_verify() {
 /// hypertree.
 #[test]
 fn the_message_selects_the_hypertree_position() {
-    let mut seen_trees = std::collections::HashSet::new();
-    let mut seen_leaves = std::collections::HashSet::new();
-    for i in 0..24u8 {
-        let message = [i; 32];
-        let (pk, sig) = signed(9, &message);
-        let parsed = Signature::from_bytes(&sig).expect("parse");
-        let trace = reference::verify_traced(&pk, &parsed, &message);
+    for set in FAST_SETS {
+        let mut seen_trees = std::collections::HashSet::new();
+        let mut seen_leaves = std::collections::HashSet::new();
+        for i in 0..24u8 {
+            let message = [i; 32];
+            let (pk, sig) = signed(set, 9, &message);
+            let parsed = Signature::from_bytes(set, &sig).expect("parse");
+            let trace = reference::verify_traced(&pk, &parsed, &message);
 
-        // The indices are exactly the digest fields, masked as FIPS 205 says.
-        let expected_tree = reference::to_int(&trace.digest[MD_LEN..MD_LEN + IDX_TREE_LEN])
-            & (u64::MAX >> (64 - IDX_TREE_BITS));
-        assert_eq!(trace.idx_tree, expected_tree);
-        assert!(trace.idx_tree < (1u64 << IDX_TREE_BITS));
-        assert!(trace.idx_leaf < (1u32 << HP));
+            // The indices are exactly the digest fields, masked as FIPS 205
+            // says. A `d = 1` set carries no tree index at all, and the mask
+            // below would be a shift by 64 — so that case is stated rather
+            // than folded into the arithmetic.
+            if set.idx_tree_bits() == 0 {
+                assert_eq!(trace.idx_tree, 0, "{}: a one-layer hypertree has one tree", set.name);
+            } else {
+                let field = &trace.digest[set.md_len()..set.md_len() + set.idx_tree_len()];
+                let expected = reference::to_int(field) & (u64::MAX >> (64 - set.idx_tree_bits()));
+                assert_eq!(trace.idx_tree, expected, "{}", set.name);
+                assert!(trace.idx_tree < (1u64 << set.idx_tree_bits()));
+            }
+            assert!(trace.idx_leaf < (1u32 << set.hp));
 
-        // FORS opens k trees at message-derived leaves.
-        assert_eq!(trace.fors_indices.len(), K);
-        assert!(trace.fors_indices.iter().all(|&x| x < (1 << A)));
+            // FORS opens k trees at message-derived leaves.
+            assert_eq!(trace.fors_indices.len(), set.k);
+            assert!(trace.fors_indices.iter().all(|&x| x < (1 << set.a)));
 
-        seen_trees.insert(trace.idx_tree);
-        seen_leaves.insert(trace.idx_leaf);
+            seen_trees.insert(trace.idx_tree);
+            seen_leaves.insert(trace.idx_leaf);
+        }
+
+        // Statelessness is exactly this: different messages land in different
+        // places without anything being recorded. A `d = 1` set spreads over
+        // leaves only, because it has a single tree to spread within.
+        let spread = if set.idx_tree_bits() == 0 { seen_leaves.len() } else { seen_trees.len() };
+        assert!(spread > 20, "{}: only {spread} distinct positions in 24 signatures", set.name);
+        assert!(seen_leaves.len() > 10, "{}: only {} distinct leaves", set.name, seen_leaves.len());
     }
-    // Statelessness is exactly this: different messages land in different
-    // places without anything being recorded.
-    assert!(seen_trees.len() > 20, "only {} distinct trees in 24 signatures", seen_trees.len());
-    assert!(seen_leaves.len() > 10, "only {} distinct leaves", seen_leaves.len());
 }
 
 /// The layer addresses walk the hypertree the way Algorithm 21 says: each
@@ -83,23 +98,33 @@ fn the_message_selects_the_hypertree_position() {
 /// pair address is the bits that fell off.
 #[test]
 fn hypertree_layer_addresses_are_shifts_of_the_tree_index() {
-    let (pk, sig) = signed(3, b"addressing");
-    let trace = reference::verify_traced(&pk, &Signature::from_bytes(&sig).unwrap(), b"addressing");
+    for set in FAST_SETS {
+        let (pk, sig) = signed(set, 3, b"addressing");
+        let parsed = Signature::from_bytes(set, &sig).unwrap();
+        let trace = reference::verify_traced(&pk, &parsed, b"addressing");
 
-    assert_eq!(trace.layer_addresses.len(), D);
-    assert_eq!(trace.layer_addresses[0], (trace.idx_tree, trace.idx_leaf));
-    for layer in 1..D {
-        let (tree, leaf) = trace.layer_addresses[layer];
-        assert_eq!(tree, trace.idx_tree >> (HP * layer), "layer {layer} tree address");
-        assert_eq!(
-            u64::from(leaf),
-            (trace.idx_tree >> (HP * (layer - 1))) & ((1 << HP) - 1),
-            "layer {layer} key pair address"
-        );
+        assert_eq!(trace.layer_addresses.len(), set.d, "{}", set.name);
+        assert_eq!(trace.layer_addresses[0], (trace.idx_tree, trace.idx_leaf));
+        for layer in 1..set.d {
+            let (tree, leaf) = trace.layer_addresses[layer];
+            assert_eq!(
+                tree,
+                trace.idx_tree >> (set.hp * layer),
+                "{}: layer {layer} tree address",
+                set.name
+            );
+            assert_eq!(
+                u64::from(leaf),
+                (trace.idx_tree >> (set.hp * (layer - 1))) & ((1 << set.hp) - 1),
+                "{}: layer {layer} key pair address",
+                set.name
+            );
+        }
+
+        // The top layer's tree address must be zero: `h - h/d` bits of index
+        // are consumed by exactly `d - 1` shifts of `h'`.
+        assert_eq!(trace.layer_addresses[set.d - 1].0, 0, "{}", set.name);
     }
-    // The top layer's tree address must be zero: h - h/d is 54 bits and six
-    // shifts of nine consume all of it.
-    assert_eq!(trace.layer_addresses[D - 1].0, 0);
 }
 
 /// **The ADRS negative control.** Break the address layout the way a
@@ -159,16 +184,19 @@ fn hashes_are_truncated_to_n_bytes() {
 /// the length-committed digest are for.
 #[test]
 fn near_miss_messages_are_rejected() {
-    let plan = BlobPlan::default();
-    let message = [0x9au8; 32];
-    let (pk, sig) = signed(4, &message);
+    for set in FAST_SETS {
+        let plan = BlobPlan::for_params(set);
+        let message = [0x9au8; 32];
+        let (pk, sig) = signed(set, 4, &message);
 
-    for pos in [0usize, 15, 31] {
-        let mut near = message;
-        near[pos] ^= 0x80;
-        assert!(
-            execute(&spend_script(&pk, &plan, &sig, &near)).is_err(),
-            "a signature verified against a message differing only at byte {pos}"
-        );
+        for pos in [0usize, 15, 31] {
+            let mut near = message;
+            near[pos] ^= 0x80;
+            assert!(
+                execute(&spend_script(&pk, &plan, &sig, &near)).is_err(),
+                "{}: a signature verified against a message differing at byte {pos}",
+                set.name
+            );
+        }
     }
 }

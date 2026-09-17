@@ -1,9 +1,10 @@
 //! Blob-and-slice witness encoding.
 //!
-//! An SLH-DSA-128s signature is 491 `n`-byte elements. `MAX_STACK_SIZE` is
-//! **244, counting both stacks**, so the LMS approach — push every element and
-//! address it directly — is not available. The signature is pushed as a
-//! smaller number of concatenated blobs and sliced back apart in script.
+//! An SLH-DSA signature is 241 to 491 `n`-byte elements, depending on the
+//! parameter set. `MAX_STACK_SIZE` is **244, counting both stacks**, so the LMS
+//! approach — push every element and address it directly — is not available for
+//! any of them. The signature is pushed as a smaller number of concatenated
+//! blobs and sliced back apart in script.
 //!
 //! # What slicing actually costs
 //!
@@ -39,7 +40,7 @@
 use anyhow::{ensure, Result};
 use vault_core::ScriptWriter;
 
-use crate::params::{N, SIG_ELEMENTS, SIG_LEN};
+use crate::params::{Params, N};
 
 /// Elements per blob.
 ///
@@ -50,23 +51,34 @@ use crate::params::{N, SIG_ELEMENTS, SIG_LEN};
 pub const BLOB_ELEMS: usize = 4;
 
 /// How a signature is cut into blobs.
+///
+/// Carries its parameter set, because the plan is part of the redeem script
+/// and therefore part of the address: a plan built for one set and used to
+/// slice another's signature would produce a script that is internally
+/// consistent and unspendable.
 #[derive(Clone, Debug)]
 pub struct BlobPlan {
+    pub p: &'static Params,
     /// Elements in each blob, in consumption order.
     pub blobs: Vec<usize>,
 }
 
 impl BlobPlan {
-    pub fn new(elems_per_blob: usize) -> Result<Self> {
+    pub fn new(p: &'static Params, elems_per_blob: usize) -> Result<Self> {
         ensure!(elems_per_blob > 0, "a blob must hold at least one element");
         let mut blobs = Vec::new();
-        let mut left = SIG_ELEMENTS;
+        let mut left = p.sig_elements();
         while left > 0 {
             let take = left.min(elems_per_blob);
             blobs.push(take);
             left -= take;
         }
-        Ok(Self { blobs })
+        Ok(Self { p, blobs })
+    }
+
+    /// The default plan for a set: [`BLOB_ELEMS`] elements per blob.
+    pub fn for_params(p: &'static Params) -> Self {
+        Self::new(p, BLOB_ELEMS).expect("BLOB_ELEMS is non-zero")
     }
 
     pub fn blob_count(&self) -> usize {
@@ -118,8 +130,10 @@ impl BlobPlan {
     /// so its length is the witness half of the on-chain cost.
     pub fn witness_pushes(&self, signature: &[u8]) -> Result<Vec<u8>> {
         ensure!(
-            signature.len() == SIG_LEN,
-            "signature must be {SIG_LEN} bytes, got {}",
+            signature.len() == self.p.sig_len(),
+            "{} signature must be {} bytes, got {}",
+            self.p.name,
+            self.p.sig_len(),
             signature.len()
         );
         let mut w = ScriptWriter::new();
@@ -135,77 +149,97 @@ impl BlobPlan {
     /// A witness of the right *length* filled with zeros, for sizing an
     /// unsigned transaction before a one-time cost is paid to sign it.
     pub fn placeholder_witness(&self) -> Result<Vec<u8>> {
-        self.witness_pushes(&vec![0u8; SIG_LEN])
-    }
-}
-
-impl Default for BlobPlan {
-    fn default() -> Self {
-        Self::new(BLOB_ELEMS).expect("BLOB_ELEMS is non-zero")
+        self.witness_pushes(&vec![0u8; self.p.sig_len()])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::params::ALL;
 
     #[test]
     fn every_element_lands_in_exactly_one_blob() {
-        let plan = BlobPlan::new(BLOB_ELEMS).unwrap();
-        assert_eq!(plan.blobs.iter().sum::<usize>(), SIG_ELEMENTS);
-        for i in 0..SIG_ELEMENTS {
-            let (b, pos) = plan.locate(i);
-            assert!(pos < plan.blobs[b]);
-        }
-        // Locations are strictly increasing, so nothing is aliased.
-        let mut prev = (0usize, 0usize);
-        for i in 1..SIG_ELEMENTS {
-            let here = plan.locate(i);
-            assert!(here > prev, "element {i} does not follow its predecessor");
-            prev = here;
+        for set in ALL {
+            let plan = BlobPlan::for_params(set);
+            assert_eq!(plan.blobs.iter().sum::<usize>(), set.sig_elements(), "{}", set.name);
+            for i in 0..set.sig_elements() {
+                let (b, pos) = plan.locate(i);
+                assert!(pos < plan.blobs[b]);
+            }
+            // Locations are strictly increasing, so nothing is aliased.
+            let mut prev = (0usize, 0usize);
+            for i in 1..set.sig_elements() {
+                let here = plan.locate(i);
+                assert!(here > prev, "{}: element {i} does not follow its predecessor", set.name);
+                prev = here;
+            }
         }
     }
 
     #[test]
     fn the_witness_reassembles_the_signature() {
-        let plan = BlobPlan::new(BLOB_ELEMS).unwrap();
-        let sig: Vec<u8> = (0..SIG_LEN).map(|i| (i % 251) as u8).collect();
-        let witness = plan.witness_pushes(&sig).unwrap();
+        for set in ALL {
+            let plan = BlobPlan::for_params(set);
+            let sig: Vec<u8> = (0..set.sig_len()).map(|i| (i % 251) as u8).collect();
+            let witness = plan.witness_pushes(&sig).unwrap();
 
-        // Every signature byte must appear, in order, inside the pushes.
-        let mut recovered = Vec::new();
-        let mut i = 0;
-        while i < witness.len() {
-            let op = witness[i];
-            let (len, header) = match op {
-                0x4c => (witness[i + 1] as usize, 2),
-                0x4d => (u16::from_le_bytes([witness[i + 1], witness[i + 2]]) as usize, 3),
-                n if n <= 0x4b => (n as usize, 1),
-                other => panic!("unexpected opcode {other:#x} in a push-only witness"),
-            };
-            recovered.extend_from_slice(&witness[i + header..i + header + len]);
-            i += header + len;
+            // Every signature byte must appear, in order, inside the pushes.
+            let mut recovered = Vec::new();
+            let mut i = 0;
+            while i < witness.len() {
+                let op = witness[i];
+                let (len, header) = match op {
+                    0x4c => (witness[i + 1] as usize, 2),
+                    0x4d => (u16::from_le_bytes([witness[i + 1], witness[i + 2]]) as usize, 3),
+                    n if n <= 0x4b => (n as usize, 1),
+                    other => panic!("unexpected opcode {other:#x} in a push-only witness"),
+                };
+                recovered.extend_from_slice(&witness[i + header..i + header + len]);
+                i += header + len;
+            }
+            assert_eq!(recovered, sig, "{}", set.name);
         }
-        assert_eq!(recovered, sig);
+    }
+
+    /// A plan must refuse a signature from a different set. The sets have
+    /// different signature lengths, so this is a length check — but it is the
+    /// check standing between "wrong parameter set" and an unspendable vault.
+    #[test]
+    fn a_plan_refuses_another_sets_signature() {
+        let plan = BlobPlan::for_params(&crate::params::SHA2_128S);
+        let wrong = vec![0u8; crate::params::SHA2_128_24.sig_len()];
+        let err = plan.witness_pushes(&wrong).unwrap_err().to_string();
+        assert!(err.contains("SLH-DSA-SHA2-128s"), "error should name the expected set: {err}");
     }
 
     #[test]
     fn the_placeholder_is_the_size_of_a_real_witness() {
-        let plan = BlobPlan::default();
-        let sig: Vec<u8> = (0..SIG_LEN).map(|i| (i % 251) as u8).collect();
-        assert_eq!(plan.placeholder_witness().unwrap().len(), plan.witness_pushes(&sig).unwrap().len());
+        for set in ALL {
+            let plan = BlobPlan::for_params(set);
+            let sig: Vec<u8> = (0..set.sig_len()).map(|i| (i % 251) as u8).collect();
+            assert_eq!(
+                plan.placeholder_witness().unwrap().len(),
+                plan.witness_pushes(&sig).unwrap().len(),
+                "{}",
+                set.name
+            );
+        }
     }
 
     #[test]
     fn the_default_plan_fits_the_stack_limit() {
-        let plan = BlobPlan::default();
-        // 32 slots is a generous allowance for the verifier's working frame,
-        // which never exceeds a dozen.
-        let peak = plan.peak_stack_estimate(32);
-        assert!(
-            peak < kaspa_txscript::MAX_STACK_SIZE,
-            "peak stack {peak} exceeds MAX_STACK_SIZE"
-        );
+        for set in ALL {
+            let plan = BlobPlan::for_params(set);
+            // 32 slots is a generous allowance for the verifier's working
+            // frame, which never exceeds a dozen.
+            let peak = plan.peak_stack_estimate(32);
+            assert!(
+                peak < kaspa_txscript::MAX_STACK_SIZE,
+                "{}: peak stack {peak} exceeds MAX_STACK_SIZE",
+                set.name
+            );
+        }
     }
 
     /// A single blob holding the whole signature is what the naive encoding
@@ -213,14 +247,17 @@ mod tests {
     /// forgotten.
     #[test]
     fn one_big_blob_is_quadratically_worse() {
-        let small = BlobPlan::new(BLOB_ELEMS).unwrap();
-        let huge = BlobPlan::new(SIG_ELEMENTS).unwrap();
-        assert_eq!(huge.blob_count(), 1);
-        assert!(
-            huge.estimated_slice_units() > 40 * small.estimated_slice_units(),
-            "small {} vs huge {}",
-            small.estimated_slice_units(),
-            huge.estimated_slice_units()
-        );
+        for set in ALL {
+            let small = BlobPlan::for_params(set);
+            let huge = BlobPlan::new(set, set.sig_elements()).unwrap();
+            assert_eq!(huge.blob_count(), 1);
+            assert!(
+                huge.estimated_slice_units() > 20 * small.estimated_slice_units(),
+                "{}: small {} vs huge {}",
+                set.name,
+                small.estimated_slice_units(),
+                huge.estimated_slice_units()
+            );
+        }
     }
 }

@@ -2,85 +2,81 @@
 
 //! Shared test fixtures.
 //!
-//! Keys are generated from a seeded RNG rather than the OS one. That is not
-//! about secrecy — it is because script units are **data-dependent**: a
-//! Winternitz chain runs from its message digit to 14, so a different signature
+//! Keys are derived from a tag rather than from the OS RNG. That is not about
+//! secrecy — it is because script units are **data-dependent**: a Winternitz
+//! chain runs from its message digit to `w - 1`, so a different signature
 //! executes a different number of hashes. A test that generated a fresh key for
 //! its probe and another for its measurement would compare two different
 //! numbers, and a compute budget derived that way under-declares.
 
-use fips205::slh_dsa_sha2_128s;
-use fips205::traits::{SerDes, Signer};
-use rand_core::{CryptoRng, RngCore};
+use slh_script::params::{Params, N, SHA2_128_24};
 use slh_script::witness::BlobPlan;
-use slh_script::{build_verify_script, PublicKey};
+use slh_script::{build_verify_script, PublicKey, SecretSeeds, SigningKey};
 use vault_core::ScriptWriter;
 
-/// A counter-mode SHA-256 stream. Deterministic, and only ever used to make
-/// test keys reproducible.
-pub struct SeededRng {
-    seed: [u8; 32],
-    counter: u64,
-    buffer: Vec<u8>,
-}
-
-impl SeededRng {
-    pub fn new(tag: u8) -> Self {
-        let mut seed = [0u8; 32];
-        seed[0] = tag;
-        Self { seed, counter: 0, buffer: Vec::new() }
-    }
-
-    fn refill(&mut self) {
+/// Three independent seeds from one tag, so a test can name a key with a byte.
+pub fn seeds(tag: u8) -> SecretSeeds {
+    let field = |label: &[u8]| {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(self.seed);
-        h.update(self.counter.to_le_bytes());
-        self.counter += 1;
-        self.buffer.extend_from_slice(&h.finalize());
-    }
+        h.update(b"slh-script test key");
+        h.update(label);
+        h.update([tag]);
+        let full = h.finalize();
+        let mut out = [0u8; N];
+        out.copy_from_slice(&full[..N]);
+        out
+    };
+    SecretSeeds { sk_seed: field(b"sk"), sk_prf: field(b"prf"), pk_seed: field(b"pk") }
 }
 
-impl RngCore for SeededRng {
-    fn next_u32(&mut self) -> u32 {
-        let mut b = [0u8; 4];
-        self.fill_bytes(&mut b);
-        u32::from_le_bytes(b)
-    }
-    fn next_u64(&mut self) -> u64 {
-        let mut b = [0u8; 8];
-        self.fill_bytes(&mut b);
-        u64::from_le_bytes(b)
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        let mut written = 0;
-        while written < dest.len() {
-            if self.buffer.is_empty() {
-                self.refill();
-            }
-            let take = (dest.len() - written).min(self.buffer.len());
-            dest[written..written + take].copy_from_slice(&self.buffer[..take]);
-            self.buffer.drain(..take);
-            written += take;
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
+/// A reproducible key for `set`, cached for the lifetime of the test binary.
+///
+/// `SLH-DSA-SHA2-128-24` generates a hypertree of four million leaves, which
+/// is about a hundred seconds of hashing — once per key per process, and every test in
+/// a binary that asks for the same tag shares it.
+pub fn key(set: &'static Params, tag: u8) -> std::sync::Arc<SigningKey> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
 
-impl CryptoRng for SeededRng {}
+    type Keys = Mutex<HashMap<(&'static str, u8), Arc<SigningKey>>>;
+    static CACHE: OnceLock<Keys> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    // The lock is released before generating, so two tests asking for
+    // different keys do not serialise behind each other. Generating the same
+    // key twice is wasteful but correct, and the threaded test harness makes
+    // it unlikely enough not to be worth a per-key lock.
+    if let Some(found) = cache.lock().expect("key cache").get(&(set.name, tag)) {
+        return Arc::clone(found);
+    }
+    let generated = Arc::new(SigningKey::generate(set, seeds(tag)));
+    cache.lock().expect("key cache").insert((set.name, tag), Arc::clone(&generated));
+    generated
+}
 
 /// A reproducible key pair and its signature over `message`.
 ///
-/// Signing is deterministic (`hedged = false`), so the same tag and message
-/// always produce the same signature and therefore the same script units.
-pub fn signed(tag: u8, message: &[u8]) -> (PublicKey, Vec<u8>) {
-    let mut rng = SeededRng::new(tag);
-    let (fips_pk, sk) = slh_dsa_sha2_128s::try_keygen_with_rng(&mut rng).expect("keygen");
-    let sig = sk.try_sign(message, &[], false).expect("sign");
-    (PublicKey::from_bytes(&fips_pk.into_bytes()).expect("pk"), sig.to_vec())
+/// Signing is deterministic, so the same set, tag and message always produce
+/// the same signature and therefore the same script units.
+pub fn signed(set: &'static Params, tag: u8, message: &[u8]) -> (PublicKey, Vec<u8>) {
+    let key = key(set, tag);
+    (key.public_key(), key.sign(message))
+}
+
+/// The sets a test may run without paying for a four-million-leaf hypertree.
+///
+/// `SLH-DSA-SHA2-128-24` is excluded and covered by `#[ignore]`d tests that
+/// name it explicitly — `measurement::the_2_24_sets_are_measured_against_128s`
+/// and `comparison::every_scheme_measured_side_by_side` — so a default
+/// `cargo test` stays in seconds rather than minutes. Excluding it from the
+/// *fast* set is a scheduling decision, not a coverage one.
+pub const FAST_SETS: &[&Params] =
+    &[&slh_script::params::SHA2_128S, &slh_script::params::SHA2_128_24_D2];
+
+/// Whether a set is the slow one, for tests that want to say so in a message.
+pub fn is_slow(set: &Params) -> bool {
+    set.name == SHA2_128_24.name
 }
 
 /// A bare verifier plus its witness, concatenated into one executable script.

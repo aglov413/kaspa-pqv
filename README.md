@@ -4,22 +4,44 @@ Post-quantum vault addresses for Kaspa. A vault is an ordinary P2SH address
 whose spend condition is a **hash-based signature verified directly in Kaspa
 script** — no zero-knowledge proof, no precompile, and no opcode added for it.
 
-Two schemes are implemented and both have spent on testnet-10:
+Four schemes are implemented and **all four have spent on testnet-10**.
 
-| | **SLH-DSA-SHA2-128s** | **LMS h=15 w=2** |
-|---|---|---|
-| standard | FIPS 205 | RFC 8554 / NIST SP 800-208 |
-| stateful | **no** | yes — each leaf signs once |
-| addresses per vault | **1** | 32,768 |
-| safe to sign off-chain | **yes** | no |
-| transaction size | 97,472 B | **24,890 B** |
-| fee (measured) | 0.2339 TKAS | **0.0597 TKAS** |
-| spends per block | 2 | **~10** |
-| key generation | **0.18 s** | 5.96 s |
+| | **SLH-DSA-128s** | **SLH-DSA-128-24** | **SLH-DSA-128-24d2** | **LMS h=15 w=2** |
+|---|---|---|---|---|
+| standard | FIPS 205 | SP 800-230 ipd | **none** | RFC 8554 / SP 800-208 |
+| stateful | **no** | **no** | **no** | yes — each leaf signs once |
+| signatures per key | 2^64 | 2^24 | 2^24 | 2^15 |
+| addresses per vault | **1** | **1** | **1** | 32,768 |
+| safe to sign off-chain | **yes** | **yes** | **yes** | no |
+| signature | 7,856 B | **3,856 B** | 5,216 B | 4,780 B |
+| redeem script | 89,235 B | **21,752 B** | 29,197 B | 19,717 B |
+| key generation | 0.08 s | ~100 s | 0.09 s | 5.96 s |
+| signing | 0.52 s | 23 s | **0.20 s** | 0.02 s |
 
-Neither is strictly better. SLH-DSA costs about 3.9x the bytes and deletes an
-entire category of operational failure; LMS is cheap and demands that you never
-sign the same key twice, including for things the chain never sees.
+Measured transaction sizes and fees are in [Measured costs](#measured-costs).
+The short version: **`SLH-DSA-SHA2-128-24` spends for 1.04x LMS's transaction
+bytes and fewer script units than LMS.** Statelessness used to cost 3.9x on this
+chain. At these parameters it costs about 4%.
+
+None is strictly better. The three SLH-DSA sets delete an entire category of
+operational failure; LMS is cheap and demands that you never sign the same key
+twice, including for things the chain never sees. Among the SLH-DSA sets, the
+axis is what a 2^24 signature limit buys: roughly a quarter of the on-chain
+bytes, at a signing cost that depends entirely on `d`.
+
+**A 2^24 limit is not a limit for a vault.** A vault spending once a day reaches
+it in about 45,000 years. FIPS 205 sizes every standard set for 2^64 signatures
+under one key; NIST's SP 800-230 draft (April 2026) proposes selling that unused
+headroom back as signature size, for exactly the "sign-once, verify-many" case a
+vault is. On a chain that charges for bytes, that is the trade worth having.
+
+**`128-24d2` is not a standard.** It appears in no NIST document. It is carried
+here because `128-24`'s `d = 1` puts a single XMSS tree of 4,194,304 leaves in
+front of every signature — about 100 seconds to generate a key and 23 to sign,
+on six cores — and `d = 2` buys that back almost entirely for 1,360 more
+signature bytes. Whether that is a good trade is what measuring it is for. It has none of
+the other two sets' security analysis behind it and should never be described as
+standardised.
 
 The normative description — derivation, the binding digest byte layout, the
 compressed ADRS, witness encoding, security considerations and the frozen
@@ -56,7 +78,7 @@ for a FIPS 205 verifier.
 
 Pre-Toccata limits made this impossible outright — 201 operations, 10 KB
 scripts and 520-byte stack elements, against the ~10,000 operations and 19 KB
-script an LMS spend needs, let alone SLH-DSA's 89 KB.
+script an LMS spend needs, let alone SLH-DSA's 22 to 89 KB.
 
 **What has *not* been done is running it on mainnet.** That is a testing gap,
 not a consensus one: the opcodes, the transaction format and the mass rules are
@@ -68,22 +90,42 @@ identical on both networks, and the same code paths would execute. See
 Testnet-10:
 
 ```
-SLH-DSA  4f4f96c2494d741b3cc0f30bde3a15faa956bbdfeed60ba184cbef185dc2cd6c   first spend
-SLH-DSA  25a8dc25735ec649f3d99379f969c5c7761d8546514c783050b34c5ad6c8d3d4   spends its own change
-LMS      9df246be429549dfd7635f2c95c6fed580f491632db9ee5777a9fab22fce755a   leaf 0 -> 1
-LMS      7dd3834583a9b501f969420b4aff1b7ef6fe51b8151463ba30672fa2671e0a00   leaf 1 -> 2
+SLH-DSA-128s      4f4f96c2494d741b3cc0f30bde3a15faa956bbdfeed60ba184cbef185dc2cd6c   first spend
+SLH-DSA-128s      25a8dc25735ec649f3d99379f969c5c7761d8546514c783050b34c5ad6c8d3d4   spends its own change
+SLH-DSA-128s      3197116e1b8008111b94fddc8595d35d0a79676dbbfb3696dc231427d6a60c54   funds the 128-24d2 vault
+SLH-DSA-128-24d2  4a83c79e6cfa8b058bfd3dc37e5ba0ad4f2518e3ba5fb8b5aafb6e652bc10969   first spend
+SLH-DSA-128-24d2  bf6c80e79ca9c6443420f49fa75f53864754a17f00289bf1c10f0c7311d4a3c9   spends its own change
+SLH-DSA-128-24d2  da02dcc107c180f756acaba1fe18d4bcdf9f1b8c60a08b167a202ad213d6b04d   funds the 128-24 vault
+SLH-DSA-128-24    7d74a4308bf2a7379fb3602ec947722eb890ba83f8e63347381aa7f7c7e89e45   first spend
+SLH-DSA-128-24    586e6e019603a3eead40b924da31359146129af924c553e0f738ef86263cfe08   spends its own change
+LMS               9df246be429549dfd7635f2c95c6fed580f491632db9ee5777a9fab22fce755a   leaf 0 -> 1
+LMS               7dd3834583a9b501f969420b4aff1b7ef6fe51b8151463ba30672fa2671e0a00   leaf 1 -> 2
 ```
 
-The second SLH-DSA transaction is the one that matters. It spends the first
-one's change **with the same key, from the same address, over a different
-message** — the operation that exposes an LMS one-time key. Nothing was
-consulted or recorded between the two, and the address did not move.
+Each stateless scheme funded the next, so the chain of custody runs
+`128s -> 128-24d2 -> 128-24` entirely through post-quantum vaults.
 
-The measured cost matched the lab exactly: the size, mass and compute budget a
-node accepted are the numbers the test suite reported against a fabricated UTXO.
-Nothing needed revising once real coins were involved.
+**The second transaction of each stateless pair is the one that matters.** It
+spends the first one's change with the same key, from the same address, over a
+different message — the operation that exposes an LMS one-time key. Nothing was
+consulted or recorded between the two, and the address did not move. The LMS
+rows below them walk `leaf 0 -> 1 -> 2`, burning a one-time key per spend and
+leaving dead addresses behind. That contrast is the whole argument.
 
-## Why hash-based, and why these two
+**The measured cost matched the lab.** The size, mass and compute budget a node
+accepted are the numbers the test suite reported against a fabricated UTXO —
+for `128-24d2`, to within one transaction byte and two units of normalized
+mass ([Measured costs](#measured-costs)). Nothing needed revising once real
+coins were involved.
+
+**`SLH-DSA-SHA2-128-24` costs less to verify than LMS.** Measured side by side
+in one process — same spend shape, same engine, same mass parameters — it is
+25,926 bytes against LMS's 24,891, but **266,270 script units against 373,146**,
+at a 0.0519 TKAS fee floor against 0.0498. A stateless post-quantum signature
+for about 4% more than a stateful one, now confirmed on-chain rather than
+argued.
+
+## Why hash-based, and why these
 
 Kaspa's default address type is bare pay-to-pubkey, so essentially the entire
 UTXO set exposes Schnorr public keys in the clear. Anyone wanting protection
@@ -104,7 +146,8 @@ is not a real option. That reframes a zkVM as a *compatibility shim* for SHAKE
 rather than a scaling technique.
 
 **SLH-DSA is therefore the only stateless post-quantum signature verifiable
-directly in Kaspa script.**
+directly in Kaspa script.** Which of its parameter sets is a separate question,
+and one this workspace answers by measuring three of them rather than picking.
 
 ## The statefulness problem, and what it cost to fix
 
@@ -132,7 +175,11 @@ leaf index comes from the message —
 rather than from a counter. An attestation derives its own position, a
 transaction derives another, and they never interact.
 
-**The price of that is measured, not estimated: 3.9x the on-chain bytes.**
+**The price of that is measured, not estimated.** Against LMS it was 3.9x the
+on-chain bytes when `128s` was the only stateless option. The 2^24 parameter
+sets cut that: `128-24d2` is 1.4x, and `128-24` less still. Statelessness is no
+longer expensive on this chain — it is roughly the same price as the stateful
+scheme, and the reason is that a vault never needed 2^64 signatures.
 
 ## Prerequisites
 
@@ -167,6 +214,15 @@ kaspa-vault slh-spend --to kaspatest:qr... --amount 2200000000 --dry-run
 kaspa-vault slh-spend --to kaspatest:qr... --amount 2200000000
 ```
 
+`--set` picks the parameter set; it defaults to `128s`, and each set is a
+different address under the same mnemonic:
+
+```sh
+kaspa-vault slh-address --set 128s        # FIPS 205            (default)
+kaspa-vault slh-address --set 128-24d2    # 2^24 limit, d=2     (not a standard)
+kaspa-vault slh-address --set 128-24      # 2^24 limit, d=1     (minutes to derive)
+```
+
 **LMS (stateful):**
 
 ```sh
@@ -187,12 +243,14 @@ pair when unset. Every address prints which variable it came from.
 
 ## How it works
 
-### One mnemonic, both schemes
+### One mnemonic, every scheme
 
 ```
 m / 101110' / 111111' / scheme' / account' / key_index'   ->  xi (32 bytes)
      purpose   coin      1' = LMS
-                         2' = SLH-DSA
+                         2' = SLH-DSA-SHA2-128s
+                         3' = SLH-DSA-SHA2-128-24
+                         4' = SLH-DSA-SHA2-128-24d2
 ```
 
 `xi = SHA-256("KaspaPQV-v1" || ser256(k_child))`, hashed rather than used raw
@@ -233,25 +291,46 @@ UTXOs with no error anywhere, so there are not two copies.
 ### SLH-DSA: one address, reusable
 
 ```
-H_msg -> 30-byte digest -> (md, idx_tree, idx_leaf)
-FORS         14 trees x (1 leaf hash + 12-node path)
-hypertree     7 layers x (35 Winternitz chains + 9-node path)
+H_msg -> m-byte digest -> (md, idx_tree, idx_leaf)
+FORS        k trees x (1 leaf hash + a-node path)
+hypertree   d layers x (len Winternitz chains + h'-node path)
+
+           FORS            hypertree              signature
+128s       14 x (1 + 12)   7 x (35 chains + 9)    7,856 B
+128-24      6 x (1 + 24)   1 x (68 chains + 22)   3,856 B
+128-24d2   11 x (1 + 14)   2 x (68 chains + 12)   5,216 B
 ```
 
 The hypertree position is derived from the message, so nothing has to be
 remembered between signatures. Change returns to the **same address**, which a
 stateful vault cannot do because its current leaf is burned by the spend.
 
+One emitter serves all three sets; they differ only in constants. That is not
+tidiness for its own sake — it is what makes the two unstandardised sets
+believable, since the `128s` instantiation is held against `fips205`
+key-for-key and signature-for-signature by a test.
+
 Two things make this fit inside consensus limits:
 
 - **Unrolled and gated.** A Winternitz chain's length depends on a message
-  digit, so all 15 steps are emitted and gated on `digit <= step`. Untaken
-  `OpIf` branches cost script *bytes* and zero script *units*, so a spend pays
-  worst-case size for average-case compute.
-- **Blob-and-slice witness encoding.** A signature is 491 16-byte elements and
-  `MAX_STACK_SIZE` is 244, counting both stacks. The signature is pushed as 123
-  blobs and sliced back apart. Slicing is linear in blob size, not quadratic in
-  the signature, and measures at ~3% of total script units.
+  digit, so all `w - 1` steps are emitted and gated on `digit <= step` — 15
+  under `128s`, 3 under the `w = 4` sets. Untaken `OpIf` branches cost script
+  *bytes* and zero script *units*, so a spend pays worst-case size for
+  average-case compute. Dropping `w` from 16 to 4 is most of why the 2^24 sets
+  are so much smaller on-chain: it cuts the emitted chain steps from 3,675 to
+  204 or 408, and pays for it in signature bytes the limit already bought back.
+- **Blob-and-slice witness encoding.** A signature is 241 to 491 16-byte
+  elements and `MAX_STACK_SIZE` is 244, counting both stacks — so even
+  `128-24`'s 241 elements do not fit once the verifier's working frame is on
+  the stack with them. The signature is pushed as blobs of four and sliced back
+  apart. Slicing is linear in blob size, not quadratic in the signature, and
+  measures at ~3% of total script units.
+
+**Where a set costs you is the signer.** `128-24`'s `d = 1` means one XMSS tree
+of `2^22` leaves, and every signature builds all of it: about 1.5 billion hashes
+against `128s`'s 4 million. That is deliberate in the draft — signing is a build
+server, verification is everyone — but for a vault whose signer may be an
+air-gapped laptop it is the half you notice.
 
 ### LMS: 32,768 addresses, each spending once
 
@@ -280,22 +359,69 @@ rejected transaction is simply rebuilt and re-signed.
 
 ## Measured costs
 
-From confirmed testnet-10 spends:
+All four schemes, one process, the same spend shape (one input, two standard
+outputs), the same `TxScriptEngine`, the same `MassCalculator` with testnet
+parameters. Every number is produced by Kaspa's own code
+(`cargo test --release -p slh-script --test comparison -- --ignored --nocapture`):
 
-| | SLH-DSA-SHA2-128s | LMS h=15 w=2 |
-|---|--:|--:|
-| redeem script | 89,235 B | 19,717 B |
-| transaction size | 97,472 B | 24,890 B |
-| script units | 1,330,069 | 373,146 |
-| compute budget declared | 136 units | 40 units |
-| normalized mass | 194,944 | 49,780 |
-| fee | 0.2339 TKAS | 0.0597 TKAS |
-| spends per block | 2 | ~10 |
-| key generation | 0.18 s | 5.96 s |
+| | stateful | signatures | redeem B | tx bytes | script units | norm mass | per block | fee |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| LMS h=15 w=2 | yes | 2^15 | 19,717 | 24,891 | 375,226 | 49,782 | 10 | 0.0498 |
+| SLH-DSA-128s | no | 2^64 | 89,235 | 97,473 | 1,285,456 | 194,946 | 2 | 0.1949 |
+| **SLH-DSA-128-24** | no | 2^24 | **21,752** | **25,926** | **266,270** | 51,852 | 9 | **0.0519** |
+| SLH-DSA-128-24d2 | no | 2^24 | 29,197 | 34,752 | 403,439 | 69,504 | 7 | 0.0695 |
 
-**Transient mass dominates both.** A vault spend is large but cheap to verify,
-so you pay for bytes rather than computation — which is why the honest
+**The result worth stating plainly: `SLH-DSA-SHA2-128-24` costs 1.04x LMS's
+transaction bytes and is *cheaper to verify* than LMS.** A stateless
+post-quantum vault at a stateful vault's price. The statefulness problem that
+this design spent a rewrite managing costs, at these parameters, about 4%.
+
+**The harness predicted the chain to within a byte, for both new sets.** Each
+has since spent twice on testnet-10, and the numbers a node accepted are the
+numbers the table above reports against a fabricated UTXO:
+
+| | `128-24` harness | `128-24` chain | `128-24d2` harness | `128-24d2` chain |
+|---|--:|--:|--:|--:|
+| transaction | 25,926 B | 25,925 B | 34,752 B | 34,751 B |
+| script units | 266,270 | 267,546 / 267,553 | 403,439 | 402,185 / 403,473 |
+| compute budget | 29 | 29 | 43 | 43 |
+| normalized mass | 51,852 | 51,850 | 69,504 | 69,502 |
+| fee floor | 0.0519 | 0.0519 | 0.0695 | 0.0695 |
+
+Each pair of unit counts is two spends of one key, the second spending the
+first's change. They differ because a Winternitz chain runs from its message
+digit — which is why the budget has to come from the signature actually being
+broadcast — and both fit one budget, which is `BUDGET_MARGIN_UNITS` doing its
+job. The `128s` round moved 1,330,069 → 1,393,475 → 1,393,705 and needed the
+budget to go 136 → 142; `w = 4` emits 204 or 408 chain steps instead of 3,675,
+so the band is proportionally far narrower.
+
+The `128s` and LMS rows have their own confirmed figures — 97,472 B at 0.2339
+TKAS and 24,890 B at 0.0597 TKAS — differing from the harness by
+data-dependence and a different fee choice, not a different construction.
+
+**The on-chain saving is larger than the signature saving**, which was the
+surprise. Halving the signature halves the witness, but the redeem script falls
+4.1x — because the script is mostly emitted Winternitz chain steps,
+`d·len·(w-1)`, which is 3,675 for `128s` and 204 for `128-24`. Dropping `lg(w)`
+from 4 to 2 is what does it; it costs signature bytes in `len`, and the 2^24
+limit is what already paid for those. The two changes are not independent
+improvements — the second finances the first.
+
+**Transient mass dominates every row.** A vault spend is large but cheap to
+verify, so you pay for bytes rather than computation — which is why the honest
 optimisation target is script *bytes*, not script units.
+
+**Where `128-24` costs you is the signer**: about 100 s to generate a key and
+23 s to sign, against 0.08 s and 0.52 s for `128s`. A confirmed spend took
+2m05s wall clock end to end. That is `d = 1` — one XMSS tree of 4,194,304
+leaves, rebuilt for every signature. `128-24d2` is the same signature limit with
+`d = 2`, which buys that back for 8,800 more transaction bytes.
+
+Timings are wall clock from the CLI on a six-core i5-9600K **without SHA-NI**;
+a CPU with the SHA extensions would be several times faster, and the current
+leaf builder only reaches about 3.7 of 6 cores, so this is an upper bound
+rather than a floor.
 
 Parameters were chosen by measurement, not argument. For LMS, `w=1` cannot run
 at all — its 265 chain values exceed the 244-item stack limit — and `w=4` costs
@@ -323,9 +449,9 @@ Script *bytes* do not vary, so addresses and fee estimates are stable.
 ## Limitations
 
 **Not audited.** No independent review of either script generator, the wallets,
-or the derivation. The SLH-DSA redeem script is 89 KB of unrolled opcodes; a bug
-fails in both directions — too permissive and anyone spends the vault, too
-strict and it is bricked.
+or the derivation. The SLH-DSA redeem script is 22 to 89 KB of unrolled opcodes
+depending on the parameter set; a bug fails in both directions — too permissive
+and anyone spends the vault, too strict and it is bricked.
 
 **Never run on mainnet.** Everything here has been exercised on testnet-10
 only. Toccata is live on mainnet and the required opcodes, transaction format
@@ -336,18 +462,38 @@ worth trusting with real value.
 **The address depends on a compiled artifact.** The redeem script is emitted by
 this workspace, so a changed generator is a changed address — and nothing in a
 funded address announces which construction produced it. That is pinned rather
-than left open: `Cargo.lock` is committed, both reference implementations are
-exact-pinned, `rust-toolchain.toml` fixes the compiler, frozen vectors carry
-mnemonic through to bech32 address for both schemes, and `kaspa-vault artifacts`
+than left open: `Cargo.lock` is committed, `oxicrypt-lms` is exact-pinned and
+`fips205` — now only the oracle a test compares against, not something an
+address passes through — is pinned too, `rust-toolchain.toml` fixes the
+compiler, frozen vectors carry
+mnemonic through to bech32 address for every scheme, and `kaspa-vault artifacts`
 lets a third party check their tree against yours. What is *not* claimed is a
 bit-reproducible build in the strict sense — binaries have not been compared
 across machines. The property that matters for an address is that the emitted
 script is deterministic, and that is what is pinned and checkable.
 
 **Parameters are baked into the address.** The derivation purpose, the canonical
-two-output shape, LMS's `h` and `w`, and SLH-DSA's witness blob size all change
-the redeem script and therefore every address. They cannot be altered after
-funding, and `kaspa-vault artifacts` is how you notice if one has.
+two-output shape, LMS's `h` and `w`, and SLH-DSA's parameter set and witness
+blob size all change the redeem script and therefore every address. They cannot
+be altered after funding, and `kaspa-vault artifacts` is how you notice if one
+has.
+
+**Nothing in an address says which parameter set it belongs to.** Every SLH-DSA
+public key here is 32 bytes, so a key cannot say either. A spend built for the
+wrong set fails against the script, after the coins have already been sent.
+Record the set alongside the address — `kaspa-vault slh-address --set …` prints
+both.
+
+**Both 2^24 sets have spent on testnet-10** — twice each, the second spending
+the first's change. What they have not had is review: see the two paragraphs
+above this one.
+
+**`SLH-DSA-SHA2-128-24` is a draft parameter set and `SLH-DSA-SHA2-128-24d2` is
+not a parameter set at all.** SP 800-230 is an initial public draft and its
+numbers can change before it is final; if they do, `128-24` here becomes a set
+NIST does not define, and addresses funded under it stay spendable only by this
+code. `128-24d2` was never anyone's proposal. Neither carries the standing
+`128s` has, and only `128s` should hold anything that matters.
 
 **LMS is stateful.** Losing the spend journal *and* signing again from the same
 address exposes a one-time key. The pinned-leaf design makes state recoverable
@@ -360,7 +506,7 @@ versions (`PubKey`, `PubKeyECDSA`, `ScriptHash`) and a vault is the third, so no
 wallet can label it as post-quantum. The marker lives only in your records. The
 script hash is BLAKE2b-256, so the address itself carries no quantum weakness.
 
-**Unexercised paths**: mainnet; multi-input spends (both scripts assume exactly
+**Unexercised paths**: mainnet; multi-input spends (every script assumes exactly
 one vault input); for LMS, the roll from leaf 32,767 to the next key index.
 
 **Key material is not zeroized.** Fine for a CLI that exits in seconds, not fine
@@ -374,8 +520,9 @@ format.
 
 ```
 crates/vault-core/    binding digest, script writer, derivation, preflight
-                      — everything both schemes must agree on
-crates/slh-script/    FIPS 205 parameters, ADRS, reference verifier, generator
+                      — everything every scheme must agree on
+crates/slh-script/    three parameter sets, ADRS, reference verifier and
+                      signer, script generator
 crates/slh-wallet/    deterministic keygen, vault, spending
 crates/lms-script/    RFC 8554 parameters and generator
 crates/lms-wallet/    vault, spend journal, assembly
@@ -395,25 +542,43 @@ reference implementations (`fips205` for SLH-DSA, `oxicrypt-lms` for LMS),
 including their *rejections*, with negative controls on every positive
 assertion.
 
+SP 800-230's sets have no third-party implementation to test against — nobody
+ships the draft yet — so `slh-script` carries its own FIPS 205 signer, and what
+stands behind the two new sets is that it is *the same code*: one parameterised
+implementation whose `128s` instantiation reproduces `fips205` key-for-key and
+signature-for-signature (`reference_oracle::the_signer_reproduces_fips205`).
+
 ```sh
 cargo test --release --workspace
+```
+
+Everything involving `SLH-DSA-SHA2-128-24` is `#[ignore]`d, because holding one
+of its keys costs about 100 seconds of hashing. Those tests are the only ones in the
+suite that are, and they run with:
+
+```sh
+cargo test --release --workspace -- --ignored
 ```
 
 ## Verifying your build
 
 A vault address is the hash of a script this workspace *compiles*, so an
 independent build that differs by one byte derives a different address from the
-same mnemonic. `Cargo.lock` is committed, `fips205` and `oxicrypt-lms` are
-pinned exactly, and `rust-toolchain.toml` pins the compiler — but the check
-that matters is:
+same mnemonic. `Cargo.lock` is committed, `oxicrypt-lms` and `fips205` are
+pinned exactly, and `rust-toolchain.toml` pins the compiler. Since the SLH-DSA
+signer moved in-tree, no SLH-DSA address depends on a third-party crate at all
+— but the check that matters is still:
 
 ```sh
 kaspa-vault artifacts
 ```
 
 It derives every address-affecting value from the published BIP39 test
-mnemonic, takes no key material and touches no network. Compare against
-[`docs/vault-spec.md`](docs/vault-spec.md) §3.2 and §9. **Any difference is a
+mnemonic, takes no key material and touches no network. `SLH-DSA-SHA2-128-24` is
+the one thing it skips — reproducing it means 2^22 WOTS+ public keys, and a
+verification aid nobody waits two minutes for is a verification aid nobody
+runs; `kaspa-vault slh-address --set 128-24` reproduces it on demand. Compare
+against [`docs/vault-spec.md`](docs/vault-spec.md) §3.2 and §9. **Any difference is a
 compatibility break — do not fund an address from a build that prints something
 else.**
 

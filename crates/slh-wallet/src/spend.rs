@@ -28,8 +28,6 @@
 //! so changing the declared budget does not invalidate the signature.
 
 use anyhow::{anyhow, ensure, Context, Result};
-use fips205::slh_dsa_sha2_128s;
-use fips205::traits::Signer;
 use kaspa_consensus_core::config::params::Params;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
 use kaspa_consensus_core::mass::{ComputeBudget, ScriptUnits};
@@ -46,7 +44,7 @@ use kaspa_txscript::{
 use vault_core::binding::{binding_digest, OutputView, SpendView};
 use vault_core::preflight::{estimate, PreflightReport, SpendShape};
 
-use crate::keygen::{Keypair, NoRng};
+use crate::keygen::Keypair;
 use crate::vault::{SlhVault, CANONICAL_OUTPUT_COUNT};
 
 /// Compute budget assumed when sizing an *unsigned* spend.
@@ -264,10 +262,13 @@ pub fn build_spend(
 
     // Empty context, matching what the emitted script's two zero bytes assume.
     // Deterministic signing, so a rebuild of the same spend is byte-identical.
-    let signature: [u8; slh_dsa_sha2_128s::SIG_LEN] = keypair
-        .secret
-        .try_sign_with_rng(&mut NoRng, &digest, &[], false)
-        .map_err(|e| anyhow!("signing failed: {e}"))?;
+    let signature = keypair.secret.sign(&digest);
+    ensure!(
+        keypair.secret.p == vault.p,
+        "the key was generated under {} but the vault is a {} address",
+        keypair.secret.p.name,
+        vault.p.name
+    );
 
     let redeem_script = vault.redeem_script()?;
     let signature_script = pay_to_script_hash_signature_script(

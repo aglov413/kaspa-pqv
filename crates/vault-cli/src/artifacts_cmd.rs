@@ -19,6 +19,17 @@ use sha2::{Digest, Sha256};
 use vault_core::binding::{binding_digest, OutputView, SpendView};
 use vault_core::{Derivation, Scheme, COIN_TYPE, PURPOSE, XI_DOMAIN};
 
+/// `PK.seed || PK.root` for `SLH-DSA-SHA2-128-24` at `m/…/3'/0'/0'` under the
+/// published test mnemonic.
+///
+/// Written down rather than derived, because deriving it means 4,194,304
+/// WOTS+ public keys. It is not trusted: `slh-wallet`'s
+/// `derivation_vector_2_24::the_d1_vault_is_frozen` regenerates it from the
+/// mnemonic and fails if it has moved. What it buys here is that the *emitter*
+/// — the part a rebuild can change — is checked for this set at no cost.
+const FROZEN_128_24_PK: &str =
+    "021262d373be68ca87e2f64310675bcb06368ea04376b54a13af6265dcfcf656";
+
 /// The BIP39 test vector everyone publishes. Deliberately worthless, and
 /// deliberately not any mnemonic that holds funds.
 const TEST_MNEMONIC: &str =
@@ -67,30 +78,69 @@ pub fn cmd_artifacts() -> Result<()> {
     println!("  purpose           {PURPOSE}'");
     println!("  coin type         {COIN_TYPE}'");
     println!("  xi domain         {}", String::from_utf8_lossy(XI_DOMAIN));
-    println!("  scheme 1 (LMS)    {}", Derivation { scheme: Scheme::LmsSha256, ..Derivation::DEFAULT }.path(0, 0));
-    println!("  scheme 2 (SLH)    {}", Derivation { scheme: Scheme::SlhDsaSha2_128s, ..Derivation::DEFAULT }.path(0, 0));
+    for scheme in Scheme::ALL {
+        println!(
+            "  scheme {}          {:<24} {}",
+            scheme.index(),
+            scheme.label(),
+            Derivation { scheme: *scheme, ..Derivation::DEFAULT }.path(0, 0)
+        );
+    }
     println!();
 
-    println!("-- binding digest (shared by both schemes) -------------------");
+    println!("-- binding digest (shared by every scheme) -------------------");
     let view = canonical_spend();
     println!("  canonical digest  {}", hex::encode(binding_digest(&view)?));
     println!();
 
-    println!("-- SLH-DSA-SHA2-128s (scheme 2) ------------------------------");
-    let slh_xi = Derivation { scheme: Scheme::SlhDsaSha2_128s, ..Derivation::DEFAULT }.xi(&seed, 0, 0)?;
-    let (slh_vault, _) = slh_wallet::SlhVault::from_xi(&slh_xi)?;
-    let slh_script = slh_vault.redeem_script()?;
-    println!("  xi                {}", hex::encode(slh_xi));
-    println!("  PK.seed           {}", hex::encode(slh_vault.public_key.seed));
-    println!("  PK.root           {}", hex::encode(slh_vault.public_key.root));
-    println!("  witness blobs     {}", slh_vault.plan.blob_count());
-    println!("  redeem script     {} bytes", slh_script.len());
-    println!("  script sha256     {}", sha256_hex(&slh_script));
-    println!("  address (tn10)    {}", slh_vault.address(Prefix::Testnet)?);
-    println!("  address (mainnet) {}", slh_vault.address(Prefix::Mainnet)?);
-    println!();
+    // Every SLH-DSA set, because each is a different address from the same
+    // mnemonic and "the SLH-DSA address" is no longer a thing that exists.
+    // `128-24` is skipped: reproducing it means 2^22 WOTS+ public keys, and a
+    // verification aid nobody waits two minutes for is a verification aid
+    // nobody runs. Its script is still covered — the emitted bytes do not
+    // depend on the key, so `slh-address --set 128-24` reproduces it for
+    // anyone who wants the address itself.
+    for (scheme, set) in slh_wallet::SLH_SCHEMES {
+        if set.hp >= 16 {
+            // The key is skipped — 2^22 WOTS+ public keys is a hundred seconds,
+            // and a verification aid nobody waits for is one nobody runs. The
+            // *script* is not skipped: it is emitted from the public key this
+            // derivation is frozen at, so the emitter is still checked here,
+            // which is the half of the pipeline a build can actually change.
+            let pk = slh_wallet::keygen::public_key_from_bytes(
+                &hex::decode(FROZEN_128_24_PK).expect("frozen public key hex"),
+            )?;
+            let plan = slh_script::BlobPlan::for_params(set);
+            let script =
+                slh_script::build_vault_script(&pk, &plan, slh_wallet::CANONICAL_OUTPUT_COUNT)?
+                    .script;
+            println!("-- {} (scheme {}) --", set.name, scheme.index());
+            println!("  key not derived   {} WOTS+ public keys, about 100 seconds;", set.leaves_per_tree());
+            println!("                    run `kaspa-vault slh-address --set 128-24` for it");
+            println!("  script from       the frozen public key below, not re-derived");
+            println!("  PK.seed|PK.root   {FROZEN_128_24_PK}");
+            println!("  witness blobs     {}", plan.blob_count());
+            println!("  redeem script     {} bytes", script.len());
+            println!("  script sha256     {}", sha256_hex(&script));
+            println!();
+            continue;
+        }
+        let slh_xi = Derivation { scheme: *scheme, ..Derivation::DEFAULT }.xi(&seed, 0, 0)?;
+        let (slh_vault, _) = slh_wallet::SlhVault::from_xi(set, &slh_xi)?;
+        let slh_script = slh_vault.redeem_script()?;
+        println!("-- {} (scheme {}) --", set.name, scheme.index());
+        println!("  xi                {}", hex::encode(slh_xi));
+        println!("  PK.seed           {}", hex::encode(slh_vault.public_key.seed));
+        println!("  PK.root           {}", hex::encode(slh_vault.public_key.root));
+        println!("  witness blobs     {}", slh_vault.plan.blob_count());
+        println!("  redeem script     {} bytes", slh_script.len());
+        println!("  script sha256     {}", sha256_hex(&slh_script));
+        println!("  address (tn10)    {}", slh_vault.address(Prefix::Testnet)?);
+        println!("  address (mainnet) {}", slh_vault.address(Prefix::Mainnet)?);
+        println!();
+    }
 
-    println!("-- LMS h=15 w=2 (scheme 1) -----------------------------------");
+    println!("-- LMS h=15 w=2 (scheme 1) --");
     eprintln!("(deriving the LMS vault: 32,768 one-time keys, a few seconds)");
     let lms_xi = Derivation { scheme: Scheme::LmsSha256, ..Derivation::DEFAULT }.xi(&seed, 0, 0)?;
     let (lms_vault, _) = lms_wallet::vault::Vault::from_xi(&lms_xi);

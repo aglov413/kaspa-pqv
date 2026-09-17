@@ -1,10 +1,16 @@
-//! LMS against SLH-DSA, measured the same way in the same process.
+//! LMS against every SLH-DSA parameter set, measured the same way in the same
+//! process.
 //!
-//! The point of this file is that the two numbers are comparable. Both spends
-//! have the same shape — one input, two standard outputs, the same funding
-//! amount — both are executed by the same engine, and both are massed by the
-//! same `MassCalculator` with the same network parameters. Nothing is quoted
-//! from a previous session.
+//! The point of this file is that the numbers are comparable. Every spend has
+//! the same shape — one input, two standard outputs, the same funding amount —
+//! all are executed by the same engine, and all are massed by the same
+//! `MassCalculator` with the same network parameters. Nothing is quoted from a
+//! previous session.
+//!
+//! The default run covers LMS, `128s` and `128-24d2`.
+//! `every_scheme_measured_side_by_side` adds `SLH-DSA-SHA2-128-24`, whose key
+//! generation is a hypertree of four million leaves, and is `#[ignore]`d for
+//! that reason alone.
 
 use kaspa_bip32::{Language, Mnemonic};
 use kaspa_consensus_core::config::params::{Params, TESTNET_PARAMS};
@@ -17,11 +23,10 @@ use kaspa_consensus_core::tx::{
 };
 use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script};
 
-use fips205::slh_dsa_sha2_128s;
-use fips205::traits::{SerDes, Signer};
 use vault_harness::execute_with_tx;
+use slh_script::params::{Params as SlhParams, ALL, SHA2_128S, SHA2_128_24_D2};
 use slh_script::witness::BlobPlan;
-use slh_script::{build_vault_script, PublicKey};
+use slh_script::{build_vault_script, SecretSeeds, SigningKey};
 use vault_core::binding::{binding_digest, OutputView, SpendView};
 
 static TN: Params = TESTNET_PARAMS;
@@ -81,6 +86,9 @@ fn assemble(redeem_script: Vec<u8>, witness: Vec<u8>, budget: u16) -> (Transacti
 struct Row {
     name: &'static str,
     stateful: bool,
+    /// Signatures one key may make. LMS counts leaves; SLH-DSA counts the
+    /// limit its parameter set was sized for.
+    signature_limit: String,
     redeem: usize,
     sig_script: usize,
     tx_size: u64,
@@ -94,6 +102,7 @@ struct Row {
 fn mass_row(
     name: &'static str,
     stateful: bool,
+    signature_limit: String,
     redeem: &[u8],
     tx: &Transaction,
     utxos: &[UtxoEntry],
@@ -110,6 +119,7 @@ fn mass_row(
     Row {
         name,
         stateful,
+        signature_limit,
         redeem: redeem.len(),
         sig_script: tx.inputs[0].signature_script.len(),
         tx_size: kaspa_consensus_core::mass::transaction_estimated_serialized_size(tx),
@@ -162,39 +172,51 @@ fn lms_row() -> Row {
     // charged in full as compute mass, so leaving it at a round number would
     // make the comparison meaningless.
     let (tx, utxos) = assemble(redeem.clone(), witness, budget_for(units));
-    mass_row("LMS h=15 w=2", true, &redeem, &tx, &utxos, units)
+    mass_row("LMS h=15 w=2", true, "2^15".to_string(), &redeem, &tx, &utxos, units)
 }
 
-fn slh_row() -> Row {
-    let plan = BlobPlan::default();
-    let (fips_pk, sk) = slh_dsa_sha2_128s::try_keygen().expect("keygen");
-    let pk = PublicKey::from_bytes(&fips_pk.into_bytes()).expect("pk");
+/// The signature limit each set was sized for, as a column rather than a
+/// footnote: it is the only axis on which `128s` beats the other two, and a
+/// table that omitted it would make them look strictly better.
+///
+/// Read from the set, not inferred from `h` — `h` is the hypertree height and
+/// the two differ by a factor each set's analysis chooses.
+fn signature_limit(set: &SlhParams) -> String {
+    format!("2^{}", set.sig_limit_log2)
+}
+
+fn slh_row(set: &'static SlhParams) -> Row {
+    let plan = BlobPlan::for_params(set);
+    let seeds = SecretSeeds { sk_seed: [0x11; 16], sk_prf: [0x22; 16], pk_seed: [0x33; 16] };
+    let key = SigningKey::generate(set, seeds);
+    let pk = key.public_key();
     let redeem = build_vault_script(&pk, &plan, outputs().len()).expect("emit").script;
-    let sig = sk.try_sign(&digest_for(), &[], false).expect("sign");
+    let sig = key.sign(&digest_for());
 
     let (tx, utxos) = assemble(redeem.clone(), plan.witness_pushes(&sig).unwrap(), 60_000);
-    let units = execute_with_tx(&redeem, &tx, utxos.clone(), 0).expect("SLH spend must verify").script_units;
+    let units = execute_with_tx(&redeem, &tx, utxos.clone(), 0)
+        .unwrap_or_else(|e| panic!("{} spend must verify: {e}", set.name))
+        .script_units;
 
     // Re-assemble declaring the budget this spend actually needs, which is what
     // the mass figures must reflect.
     let (tx, utxos) = assemble(redeem.clone(), plan.witness_pushes(&sig).unwrap(), budget_for(units));
-    mass_row("SLH-DSA-SHA2-128s", false, &redeem, &tx, &utxos, units)
+    mass_row(set.name, false, signature_limit(set), &redeem, &tx, &utxos, units)
 }
 
-#[test]
-fn lms_versus_slh_dsa_measured_side_by_side() {
-    let rows = [lms_row(), slh_row()];
-
+fn print_rows(rows: &[Row]) {
     println!("\n=== Same spend shape, same engine, same mass parameters ===");
     println!(
-        "  {:<20} {:>8} {:>10} {:>10} {:>10} {:>11} {:>10} {:>9} {:>7}",
-        "scheme", "stateful", "redeem B", "sigscript", "tx bytes", "units", "norm mass", "per blk", "fee KAS"
+        "  {:<24} {:>8} {:>16} {:>9} {:>10} {:>10} {:>11} {:>10} {:>8} {:>8}",
+        "scheme", "stateful", "signatures", "redeem B", "sigscript", "tx bytes", "units",
+        "norm mass", "per blk", "fee KAS"
     );
-    for r in &rows {
+    for r in rows {
         println!(
-            "  {:<20} {:>8} {:>10} {:>10} {:>10} {:>11} {:>10} {:>9} {:>7.4}",
+            "  {:<24} {:>8} {:>16} {:>9} {:>10} {:>10} {:>11} {:>10} {:>8} {:>8.4}",
             r.name,
             if r.stateful { "yes" } else { "no" },
+            r.signature_limit,
             r.redeem,
             r.sig_script,
             r.tx_size,
@@ -204,24 +226,70 @@ fn lms_versus_slh_dsa_measured_side_by_side() {
             r.fee as f64 / 100_000_000.0,
         );
     }
-    let (lms, slh) = (&rows[0], &rows[1]);
-    println!(
-        "\n  SLH-DSA costs {:.1}x the bytes and {:.1}x the fee of LMS, and needs no state.",
-        slh.tx_size as f64 / lms.tx_size as f64,
-        slh.fee as f64 / lms.fee as f64,
-    );
-    println!(
-        "  Mass axes — LMS compute {} vs normalized transient {}; SLH {} vs {}.",
-        lms.compute_mass, lms.normalized_transient, slh.compute_mass, slh.normalized_transient
-    );
+}
 
-    // Both must be mineable at all, which is the only hard constraint here.
-    for r in &rows {
+fn check(rows: &[Row]) {
+    let lms = &rows[0];
+    for r in &rows[1..] {
+        println!(
+            "  {:<24} {:>6.2}x the bytes and {:>6.2}x the fee of LMS, and needs no state.",
+            r.name,
+            r.tx_size as f64 / lms.tx_size as f64,
+            r.fee as f64 / lms.fee as f64,
+        );
+    }
+
+    // Every row must be mineable at all, which is the only hard constraint here.
+    for r in rows {
         assert!(
             r.normalized_max <= TN.block_mass_limits.compute,
             "{} needs {} normalized mass, over the block limit",
             r.name,
             r.normalized_max
+        );
+    }
+}
+
+#[test]
+fn lms_versus_slh_dsa_measured_side_by_side() {
+    let rows = [lms_row(), slh_row(&SHA2_128S), slh_row(&SHA2_128_24_D2)];
+    print_rows(&rows);
+    println!();
+    check(&rows);
+    println!(
+        "\n  Mass axes — LMS compute {} vs normalized transient {}; {} {} vs {}.",
+        rows[0].compute_mass,
+        rows[0].normalized_transient,
+        rows[1].name,
+        rows[1].compute_mass,
+        rows[1].normalized_transient
+    );
+}
+
+/// Every scheme in the workspace, including the one that costs a minute of
+/// hashing to hold a key for.
+///
+/// ```text
+/// cargo test --release -p slh-script --test comparison -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "SLH-DSA-SHA2-128-24 key generation is ~2^22 WOTS+ public keys; run explicitly"]
+fn every_scheme_measured_side_by_side() {
+    let mut rows = vec![lms_row()];
+    rows.extend(ALL.iter().map(|s| slh_row(s)));
+    print_rows(&rows);
+    println!();
+    check(&rows);
+
+    // The 2^24 sets exist to be cheaper than `128s`. If they are not, the
+    // signature limit they accept buys nothing on this chain.
+    let baseline = rows.iter().find(|r| r.name == SHA2_128S.name).expect("128s row");
+    for r in rows.iter().filter(|r| !r.stateful && r.name != SHA2_128S.name) {
+        assert!(
+            r.tx_size < baseline.tx_size,
+            "{} is not smaller than {}",
+            r.name,
+            baseline.name
         );
     }
 }

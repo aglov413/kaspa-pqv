@@ -13,7 +13,7 @@ use kaspa_addresses::{Address, Prefix};
 use kaspa_txscript::pay_to_script_hash_script;
 use vault_node::NodeClient;
 use slh_wallet::spend::{build_spend, preflight, VaultUtxo, PREFLIGHT_BUDGET_UNITS};
-use slh_wallet::{vault_path, Scheme, SlhVault};
+use slh_wallet::{params_for, vault_path, Scheme, SlhVault};
 use vault_core::binding::OutputView;
 
 use crate::{Args, Resolved};
@@ -25,31 +25,52 @@ fn kas(sompi: u64) -> String {
     format!("{:.8}", sompi as f64 / SOMPI)
 }
 
-pub fn open_vault(resolved: &Resolved) -> Result<SlhVault> {
-    let (vault, _) = open_vault_with_key(resolved)?;
+pub fn open_vault(resolved: &Resolved, scheme: Scheme) -> Result<SlhVault> {
+    let (vault, _) = open_vault_with_key(resolved, scheme)?;
     Ok(vault)
 }
 
-fn open_vault_with_key(resolved: &Resolved) -> Result<(SlhVault, slh_wallet::Keypair)> {
-    let derivation = vault_core::Derivation {
-        scheme: Scheme::SlhDsaSha2_128s,
-        ..vault_core::Derivation::DEFAULT
-    };
+fn open_vault_with_key(
+    resolved: &Resolved,
+    scheme: Scheme,
+) -> Result<(SlhVault, slh_wallet::Keypair)> {
+    let set = params_for(scheme)
+        .ok_or_else(|| anyhow::anyhow!("{} is not an SLH-DSA scheme", scheme.label()))?;
+    let derivation =
+        vault_core::Derivation { scheme, ..vault_core::Derivation::DEFAULT };
     let xi = derivation
         .xi_from(&resolved.material, 0, resolved.key_index)
         .context("deriving the vault seed")?;
-    SlhVault::from_xi(&xi)
+
+    // Key generation builds the whole top XMSS tree. Under `128-24` that is
+    // 2^22 WOTS+ public keys and minutes of hashing, and silence there looks
+    // like a hang rather than like work.
+    if set.hp >= 16 {
+        eprintln!(
+            "generating a {} key: {} WOTS+ public keys for the top tree. This takes \
+             minutes — it is the cost of d=1, not a fault.",
+            set.name,
+            set.leaves_per_tree()
+        );
+    }
+    SlhVault::from_xi(set, &xi)
 }
 
-pub fn cmd_address(resolved: &Resolved, prefix: Prefix) -> Result<()> {
-    let vault = open_vault(resolved)?;
+pub fn cmd_address(resolved: &Resolved, scheme: Scheme, prefix: Prefix) -> Result<()> {
+    let vault = open_vault(resolved, scheme)?;
     let address = vault.address(prefix)?;
     let script = vault.redeem_script()?;
+    let set = vault.p;
 
-    println!("SLH-DSA-SHA2-128s vault");
-    println!("  derivation      {}", vault_path(Scheme::SlhDsaSha2_128s, 0, resolved.key_index));
+    println!("{} vault", set.name);
+    println!("  derivation      {}", vault_path(scheme, 0, resolved.key_index));
     println!("  key from        {}", resolved.origin);
     println!("  network         {}", resolved.network);
+    println!(
+        "  parameters      n={} h={} d={} h'={} a={} k={} lg(w)={} m={}",
+        set.n, set.h, set.d, set.hp, set.a, set.k, set.lgw, set.m
+    );
+    println!("  signature       {} bytes, {} elements", set.sig_len(), set.sig_elements());
     println!("  PK.seed         {}", hex::encode(vault.public_key.seed));
     println!("  PK.root         {}", hex::encode(vault.public_key.root));
     println!("  redeem script   {} bytes, {} witness blobs", script.len(), vault.plan.blob_count());
@@ -58,6 +79,19 @@ pub fn cmd_address(resolved: &Resolved, prefix: Prefix) -> Result<()> {
     println!();
     println!("  One address, reusable. Change returns here, so the vault can be spent");
     println!("  again from the output of its own spend.");
+    if set.sig_limit_log2 < 64 {
+        // Converted to years rather than left as a power of two, because
+        // "2^24" reads as a small number and the only question that matters is
+        // whether a vault could plausibly reach it.
+        let years = set.signature_limit() / 365;
+        println!();
+        println!(
+            "  Limited to 2^{} signatures under one key, not 2^64 — counting every",
+            set.sig_limit_log2
+        );
+        println!("  signature, including ones the chain never sees. At one spend a day");
+        println!("  that is {years} years. Nothing here counts them or enforces the cap.");
+    }
     Ok(())
 }
 
@@ -85,8 +119,8 @@ async fn vault_utxos(client: &NodeClient, address: &Address) -> Result<Vec<Vault
     Ok(utxos)
 }
 
-pub async fn cmd_balance(resolved: &Resolved, prefix: Prefix) -> Result<()> {
-    let vault = open_vault(resolved)?;
+pub async fn cmd_balance(resolved: &Resolved, scheme: Scheme, prefix: Prefix) -> Result<()> {
+    let vault = open_vault(resolved, scheme)?;
     let address = vault.address(prefix)?;
 
     let client = connect(&resolved.network).await?;
@@ -112,7 +146,12 @@ fn p2sh_or_pubkey_output(address: &Address, amount: u64) -> Result<OutputView> {
     Ok(OutputView { amount, spk_version: spk.version(), script: spk.script().to_vec() })
 }
 
-pub async fn cmd_spend(args: &Args, resolved: &Resolved, prefix: Prefix) -> Result<()> {
+pub async fn cmd_spend(
+    args: &Args,
+    resolved: &Resolved,
+    scheme: Scheme,
+    prefix: Prefix,
+) -> Result<()> {
     let destination = args
         .to
         .as_deref()
@@ -128,7 +167,7 @@ pub async fn cmd_spend(args: &Args, resolved: &Resolved, prefix: Prefix) -> Resu
         .amount
         .ok_or_else(|| anyhow::anyhow!("--amount is required, in sompi"))?;
 
-    let (vault, keypair) = open_vault_with_key(resolved)?;
+    let (vault, keypair) = open_vault_with_key(resolved, scheme)?;
     let address = vault.address(prefix)?;
 
     let client = connect(&resolved.network).await?;
@@ -191,7 +230,7 @@ pub async fn cmd_spend(args: &Args, resolved: &Resolved, prefix: Prefix) -> Resu
         .context("building the spend")?;
 
     println!();
-    println!("SLH-DSA vault spend");
+    println!("{} vault spend", vault.p.name);
     println!("  from            {address}");
     println!("  spending        {} KAS  ({}:{})", kas(utxo.amount), hex::encode(utxo.txid), utxo.index);
     println!("  to              {destination}");

@@ -3,7 +3,7 @@ name = "slh-script"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Generates a fully unrolled Kaspa txscript verifier for SLH-DSA-SHA2-128s signatures (FIPS 205)."
+description = "Generates a fully unrolled Kaspa txscript verifier for SLH-DSA signatures (FIPS 205 and SP 800-230 ipd parameter sets), and signs for them."
 
 [dependencies]
 kaspa-txscript.workspace = true
@@ -19,7 +19,13 @@ kaspa-consensus-core.workspace = true
 lms-script.workspace = true
 lms-wallet.workspace = true
 kaspa-txscript.workspace = true
-fips205 = { version = "0.4.1", features = ["slh_dsa_sha2_128s"] }
-rand_core = "0.6"
+# Reference SLH-DSA implementation (FIPS 205). A **dev-dependency only**: it is
+# the oracle `reference_oracle.rs` holds this crate's own signer and verifier
+# against, key-for-key and signature-for-signature, for the one parameter set it
+# implements. It used to be a runtime dependency, which made every vault address
+# depend on the order and size of three random draws inside it — see
+# `slh-wallet/src/keygen.rs`. Still pinned exactly, because an oracle that moves
+# is not an oracle.
+fips205 = { version = "=0.4.1", features = ["slh_dsa_sha2_128s"] }
 kaspa-bip32.workspace = true
 hex.workspace = true

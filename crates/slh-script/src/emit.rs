@@ -1,19 +1,29 @@
-//! The SLH-DSA-SHA2-128s verifier, emitted as unrolled Kaspa txscript.
+//! The SLH-DSA verifier, emitted as unrolled Kaspa txscript.
 //!
 //! Implements FIPS 205 Algorithm 20 (`slh_verify_internal`) with Algorithms 8,
-//! 11, 17 and 21 inlined, for the SHA2 category-1 parameter set only.
+//! 11, 17 and 21 inlined, for any of the SHA2 category-1 sets in
+//! [`crate::params`].
 //!
 //! # Shape of the emitted script
 //!
 //! ```text
 //! prologue      move the witness blobs to the alt stack, which becomes a queue
 //! binding       reconstruct D from introspection            (vault_core::binding)
-//! H_msg         two SHA-256 calls -> a 30-byte digest
+//! H_msg         two SHA-256 calls -> an m-byte digest
 //! indices       md, idx_tree, idx_leaf carved out of the digest
-//! FORS          14 groups: one leaf hash and a 12-node path, then T_k
-//! hypertree     7 layers: 35 Winternitz chains, T_len, then a 9-node path
+//! FORS          k groups: one leaf hash and an a-node path, then T_k
+//! hypertree     d layers: len Winternitz chains, T_len, then an h'-node path
 //! epilogue      compare against the pinned PK.root
 //! ```
+//!
+//! # What the parameter set changes
+//!
+//! Everything below is a function of the set, and the two that matter most
+//! move in opposite directions. `d` multiplies the WOTS+ verifications; `w`
+//! sets how long each of its `len` chains is. `128s` pays 7 layers of 35
+//! chains of up to 15 steps; the 2^24 sets pay one or two layers of 68 chains
+//! of up to 3. The second shape is far cheaper on-chain, which is the whole
+//! reason for measuring them.
 //!
 //! # Why every hash is expensive here
 //!
@@ -21,13 +31,15 @@
 //! bytes are constant and free to *push*, but not free to *hash* — the engine
 //! charges one script unit per byte hashed, so a 16-byte message costs 102
 //! units to hash rather than 16. LMS pays 54 for the same shape. That factor,
-//! multiplied by roughly ten times as many hashes, is the cost of statelessness.
+//! multiplied by however many hashes the parameter set needs, is the cost of
+//! statelessness — about ten times LMS's under `128s`, and well under it for the
+//! 2^24 sets, whose shorter chains more than pay the factor back.
 //!
 //! # The two data-dependent branches
 //!
-//! Winternitz chain length depends on the message digit, so all 15 steps are
-//! emitted and gated on `digit <= step`. Untaken branches cost script bytes and
-//! zero script units, which is what makes the worst case affordable.
+//! Winternitz chain length depends on the message digit, so all `w - 1` steps
+//! are emitted and gated on `digit <= step`. Untaken branches cost script bytes
+//! and zero script units, which is what makes the worst case affordable.
 //!
 //! Merkle sibling order depends on an index bit. Unlike LMS — where the leaf is
 //! pinned in the script and the whole path is resolved at generation time —
@@ -49,6 +61,9 @@ use crate::witness::BlobPlan;
 pub struct Emitter<'a> {
     w: &'a mut ScriptWriter,
     f: Frame,
+    /// The parameter set being emitted, taken from the plan so the two cannot
+    /// disagree.
+    p: &'static Params,
     plan: BlobPlan,
     pk: PublicKey,
     /// Next signature element to consume, in signature order.
@@ -61,7 +76,8 @@ pub struct Emitter<'a> {
 
 impl<'a> Emitter<'a> {
     pub fn new(w: &'a mut ScriptWriter, pk: PublicKey, plan: BlobPlan) -> Self {
-        Self { w, f: Frame::new(), plan, pk, next_element: 0, pending: 0, peak_frame: 0 }
+        let p = plan.p;
+        Self { w, f: Frame::new(), p, plan, pk, next_element: 0, pending: 0, peak_frame: 0 }
     }
 
     // ---- primitive wrappers, each keeping the frame in step ----------------
@@ -233,17 +249,47 @@ impl<'a> Emitter<'a> {
     }
 
     /// The `i`-th `lgw`-bit digit of a named 16-byte slot, most significant
-    /// nibble of each byte first — `base_2b(x, 4, ..)`.
-    fn emit_nibble_of(&mut self, name: &str, i: usize) -> Result<()> {
-        let byte = i / 2;
+    /// digit of each byte first — `base_2b(x, lgw, ..)`.
+    ///
+    /// The mask is skipped for the first digit in a byte, where the shift has
+    /// already left a value below `w`. That is not a micro-optimisation for
+    /// its own sake: `len1` is 32 or 64 and every digit is read twice, once
+    /// for the checksum and once for its chain.
+    fn emit_digit_of(&mut self, name: &str, i: usize) -> Result<()> {
+        let per_byte = 8 / self.p.lgw as usize;
+        let byte = i / per_byte;
+        let pos = i % per_byte;
+        let shift = 8 - self.p.lgw as usize * (pos + 1);
+
         self.pick(name)?;
         self.substr(byte, byte + 1)?;
         self.data(&[0x00])?;
         self.cat()?;
         self.op(OpBin2Num)?;
         self.f.replace(1, "_")?;
-        self.num(16)?;
-        self.binary_num_op(if i.is_multiple_of(2) { OpDiv } else { OpMod })
+        if shift > 0 {
+            self.num(1i64 << shift)?;
+            self.binary_num_op(OpDiv)?;
+        }
+        if pos > 0 {
+            self.num(i64::from(self.p.w()))?;
+            self.binary_num_op(OpMod)?;
+        }
+        Ok(())
+    }
+
+    /// The 8-byte tree address field of an ADRS.
+    ///
+    /// A one-layer hypertree has exactly one tree, so the field is eight
+    /// constant zero bytes — a free literal push instead of an `OpNum2Bin` and
+    /// the byte reversal that follows it.
+    fn emit_tree_bytes(&mut self, slot: &str) -> Result<()> {
+        if self.p.idx_tree_bits() == 0 {
+            self.data(&[0u8; 8])
+        } else {
+            self.pick(slot)?;
+            self.emit_be_bytes(8)
+        }
     }
 
     // ---- the witness queue -------------------------------------------------
@@ -311,8 +357,9 @@ impl Emitter<'_> {
     /// `H_msg(R, PK.seed, PK.root, M')` — FIPS 205 §11.2.1 for SHA2.
     ///
     /// Two SHA-256 calls: an inner digest over the whole message, then one
-    /// MGF1 block. `M` is 30 bytes and MGF1 emits 32 per block, so the counter
-    /// is always zero and the loop unrolls to nothing.
+    /// MGF1 block. `m` is at most 30 bytes for every supported set and MGF1
+    /// emits 32 per block, so the counter is always zero and the loop unrolls
+    /// to nothing.
     ///
     /// Stack: `[.., D]` -> `[.., digest]`
     fn emit_h_msg(&mut self) -> Result<()> {
@@ -340,7 +387,7 @@ impl Emitter<'_> {
         self.data(&0u32.to_be_bytes())?; // MGF1 counter
         self.cat()?;
         self.sha256()?;
-        self.substr(0, M)?;
+        self.substr(0, self.p.m)?;
         self.name_top("digest")
     }
 
@@ -350,13 +397,24 @@ impl Emitter<'_> {
     /// function of the message, so nothing has to be remembered between
     /// signatures.
     fn emit_indices(&mut self) -> Result<()> {
-        self.emit_be_int_from("digest", MD_LEN, IDX_TREE_LEN)?;
-        self.num(1i64 << IDX_TREE_BITS)?;
-        self.binary_num_op(OpMod)?;
+        if self.p.idx_tree_bits() == 0 {
+            // `d = 1`: one tree, so the digest carries no tree index and the
+            // address is the constant zero. The slot still exists, because
+            // every hash context reads it by name.
+            self.num(0)?;
+        } else {
+            self.emit_be_int_from("digest", self.p.md_len(), self.p.idx_tree_len())?;
+            self.num(1i64 << self.p.idx_tree_bits())?;
+            self.binary_num_op(OpMod)?;
+        }
         self.name_top("tree")?;
 
-        self.emit_be_int_from("digest", MD_LEN + IDX_TREE_LEN, IDX_LEAF_LEN)?;
-        self.num(1i64 << HP)?;
+        self.emit_be_int_from(
+            "digest",
+            self.p.md_len() + self.p.idx_tree_len(),
+            self.p.idx_leaf_len(),
+        )?;
+        self.num(1i64 << self.p.hp)?;
         self.binary_num_op(OpMod)?;
         self.name_top("leaf")
     }
@@ -373,8 +431,7 @@ impl Emitter<'_> {
         let mut base = hash_pad(&self.pk.seed);
         base.push(u8::try_from(layer).expect("layer < d"));
         self.data(&base)?;
-        self.pick("tree")?;
-        self.emit_be_bytes(8)?;
+        self.emit_tree_bytes("tree")?;
         self.cat()?;
         self.data(&[ty])?;
         self.cat()?;
@@ -429,8 +486,13 @@ impl Emitter<'_> {
     ///
     /// FORS is what absorbs the residual risk of a stateless scheme. The leaf
     /// indices come from the message, so two messages can collide on a tree;
-    /// `k = 14` independent trees mean a collision degrades security rather
-    /// than destroying it, which is exactly the property LMS lacks.
+    /// `k` independent trees mean a collision degrades security rather than
+    /// destroying it, which is exactly the property LMS lacks.
+    ///
+    /// `k` and `a` trade against each other — 14 trees of height 12, 6 of
+    /// height 24, 11 of height 14 — at nearly the same security and very
+    /// different script sizes, since the auth paths total `k * a` hashes
+    /// either way but the per-tree setup is paid `k` times.
     fn emit_fors(&mut self) -> Result<()> {
         self.emit_hash_context(0, FORS_TREE, Some("leaf"), 0)?;
         self.name_top("hcf")?;
@@ -438,17 +500,28 @@ impl Emitter<'_> {
         self.emit_hash_context(0, FORS_ROOTS, Some("leaf"), 2)?;
         self.name_top("racc")?;
 
-        for i in 0..K {
-            // indices[i] = the i-th 12-bit field of md
-            let bit = i * A;
+        let lx_width = self.p.fors_index_width();
+        for i in 0..self.p.k {
+            // indices[i] = the i-th `a`-bit field of md. Three bytes is enough
+            // for every supported set — `a + 7 <= 24` where `a` is unaligned,
+            // and `a` is byte-aligned where it is larger — but the width is
+            // computed rather than assumed, because a set that needed four
+            // would otherwise read a silently truncated index.
+            let bit = i * self.p.a;
             let byte0 = bit / 8;
-            let shift = 24 - A - (bit % 8);
-            self.emit_be_int_from("digest", byte0, 3)?;
+            let field_bytes = 3.max((self.p.a + bit % 8).div_ceil(8));
+            ensure!(
+                byte0 + field_bytes <= self.p.m,
+                "FORS index {i} reads past the {}-byte digest",
+                self.p.m
+            );
+            let shift = field_bytes * 8 - self.p.a - (bit % 8);
+            self.emit_be_int_from("digest", byte0, field_bytes)?;
             if shift > 0 {
                 self.num(1i64 << shift)?;
                 self.binary_num_op(OpDiv)?;
             }
-            self.num(1i64 << A)?;
+            self.num(1i64 << self.p.a)?;
             self.binary_num_op(OpMod)?;
             self.name_top("idx")?;
 
@@ -456,29 +529,30 @@ impl Emitter<'_> {
             // it j+1 times gives the index at height j+1, which is why no
             // running value has to be maintained.
             self.pick("idx")?;
-            self.num((i as i64) << A)?;
+            self.num((i as i64) << self.p.a)?;
             self.binary_num_op(OpAdd)?;
             self.name_top("lx")?;
 
             self.fetch("sk")?;
             self.pick("hcf")?;
-            self.data(&[0u8; 5])?; // treeHeight = 0, plus the high byte of treeIndex
+            // treeHeight = 0, plus the high bytes of the 4-byte treeIndex.
+            self.data(&vec![0u8; 4 + (4 - lx_width)])?;
             self.cat()?;
             self.pick("lx")?;
-            self.emit_be_bytes(3)?;
+            self.emit_be_bytes(lx_width)?;
             self.cat()?;
             self.finish_hash()?;
             self.name_top("node")?;
 
-            for j in 0..A {
+            for j in 0..self.p.a {
                 self.fetch("auth")?;
                 self.pick("lx")?;
                 self.num(1i64 << (j + 1))?;
                 self.binary_num_op(OpDiv)?;
-                self.emit_be_bytes(3)?;
+                self.emit_be_bytes(lx_width)?;
                 self.pick("hcf")?;
                 let mut tail = (j as u32 + 1).to_be_bytes().to_vec();
-                tail.push(0x00); // high byte of the 4-byte tree index
+                tail.extend(std::iter::repeat_n(0u8, 4 - lx_width)); // high bytes of treeIndex
                 self.data(&tail)?;
                 self.cat()?;
                 self.swap()?;
@@ -504,9 +578,9 @@ impl Emitter<'_> {
 
     /// One hypertree layer: a WOTS+ verification, then a `h'`-node auth path.
     ///
-    /// Seven of these is where the on-chain cost lives. Each WOTS+ chain is
-    /// unrolled to its worst case of 15 steps and gated, so an average spend
-    /// executes about half of what it pays for in script bytes.
+    /// `d` of these is where the on-chain cost lives. Each WOTS+ chain is
+    /// unrolled to its worst case of `w - 1` steps and gated, so an average
+    /// spend executes about half of what it pays for in script bytes.
     fn emit_layer(&mut self, layer: usize) -> Result<()> {
         // The address of this layer's tree and leaf, both shifts of idx_tree.
         if layer == 0 {
@@ -516,14 +590,14 @@ impl Emitter<'_> {
             self.name_top("lleaf")?;
         } else {
             self.pick("tree")?;
-            self.num(1i64 << (HP * layer))?;
+            self.num(1i64 << (self.p.hp * layer))?;
             self.binary_num_op(OpDiv)?;
             self.name_top("ltree")?;
 
             self.pick("tree")?;
-            self.num(1i64 << (HP * (layer - 1)))?;
+            self.num(1i64 << (self.p.hp * (layer - 1)))?;
             self.binary_num_op(OpDiv)?;
-            self.num(1i64 << HP)?;
+            self.num(1i64 << self.p.hp)?;
             self.binary_num_op(OpMod)?;
             self.name_top("lleaf")?;
         }
@@ -533,8 +607,7 @@ impl Emitter<'_> {
         let mut base = hash_pad(&self.pk.seed);
         base.push(u8::try_from(layer).expect("layer < d"));
         self.data(&base)?;
-        self.pick("ltree")?;
-        self.emit_be_bytes(8)?;
+        self.emit_tree_bytes("ltree")?;
         self.cat()?;
         self.name_top("hcb")?;
 
@@ -570,15 +643,16 @@ impl Emitter<'_> {
 
         self.emit_wots(layer)?;
 
-        for k in 0..HP {
+        let idx_width = self.p.xmss_index_width();
+        for k in 0..self.p.hp {
             self.fetch("auth")?;
             self.pick("lleaf")?;
             self.num(1i64 << (k + 1))?;
             self.binary_num_op(OpDiv)?;
-            self.emit_be_bytes(2)?;
+            self.emit_be_bytes(idx_width)?;
             self.pick("hct")?;
             let mut tail = (k as u32 + 1).to_be_bytes().to_vec();
-            tail.extend_from_slice(&[0u8, 0u8]); // high half of the tree index
+            tail.extend(std::iter::repeat_n(0u8, 4 - idx_width)); // high bytes of the tree index
             self.data(&tail)?;
             self.cat()?;
             self.swap()?;
@@ -596,12 +670,13 @@ impl Emitter<'_> {
     fn emit_wots(&mut self, _layer: usize) -> Result<()> {
         // The checksum needs every message digit, so it is accumulated in its
         // own pass; the digits are then re-read per chain rather than stored,
-        // which keeps 35 values off a stack that is already the binding limit.
+        // which keeps `len1` values off a stack that is already the binding
+        // limit — 32 of them under `128s`, 64 under the `lg(w) = 2` sets.
         self.num(0)?;
         self.name_top("csum")?;
-        for i in 0..LEN1 {
-            self.emit_nibble_of("node", i)?;
-            self.num(i64::from(W) - 1)?;
+        for i in 0..self.p.len1() {
+            self.emit_digit_of("node", i)?;
+            self.num(i64::from(self.p.w()) - 1)?;
             self.swap()?;
             self.binary_num_op(OpSub)?;
             self.binary_num_op(OpAdd)?;
@@ -611,36 +686,31 @@ impl Emitter<'_> {
         self.pick("hcp")?;
         self.name_top("acc")?;
 
-        for i in 0..LEN {
-            if i < LEN1 {
-                self.emit_nibble_of("node", i)?;
+        for i in 0..self.p.len() {
+            if i < self.p.len1() {
+                self.emit_digit_of("node", i)?;
             } else {
-                // csum is shifted left by 4 and split into three digits, which
-                // for a 12-bit checksum is just its nibbles, most significant
-                // first.
+                // The checksum spans `len2 * lgw` bits; digit `j` is the field
+                // starting `lgw * (j + 1)` bits from its bottom. FIPS 205
+                // writes this as a left shift to a byte boundary followed by
+                // `base_2b`, which is the same digits.
+                let j = (i - self.p.len1()) as u32;
+                let shift = self.p.csum_bits() - self.p.lgw * (j + 1);
                 self.pick("csum")?;
-                match i - LEN1 {
-                    0 => {
-                        self.num(256)?;
-                        self.binary_num_op(OpDiv)?;
-                    }
-                    1 => {
-                        self.num(16)?;
-                        self.binary_num_op(OpDiv)?;
-                        self.num(16)?;
-                        self.binary_num_op(OpMod)?;
-                    }
-                    _ => {
-                        self.num(16)?;
-                        self.binary_num_op(OpMod)?;
-                    }
+                if shift > 0 {
+                    self.num(1i64 << shift)?;
+                    self.binary_num_op(OpDiv)?;
+                }
+                if j > 0 {
+                    self.num(i64::from(self.p.w()))?;
+                    self.binary_num_op(OpMod)?;
                 }
             }
             self.name_top("d")?;
 
             // Folding the chain address into the context leaves only the hash
-            // address to push per step — one byte instead of eight, over 3,675
-            // emitted steps.
+            // address to push per step — one byte instead of eight, over every
+            // emitted step of every chain of every layer.
             self.pick("hcw")?;
             let mut chain_tail = (i as u32).to_be_bytes().to_vec();
             chain_tail.extend_from_slice(&[0u8; 3]); // high 3 bytes of hashAddress
@@ -650,14 +720,14 @@ impl Emitter<'_> {
             self.roll("d")?;
 
             self.fetch("x")?;
-            for step in 0..(W - 1) {
+            for step in 0..(self.p.w() - 1) {
                 self.over()?; // the digit
                 self.num(i64::from(step))?;
                 self.binary_num_op(OpLessThanOrEqual)?;
                 self.op(OpIf)?;
                 self.f.pop()?;
                 self.pick("hcwi")?;
-                self.data(&[u8::try_from(step).expect("step < 16")])?;
+                self.data(&[u8::try_from(step).expect("step < w <= 16")])?;
                 self.cat()?;
                 self.finish_hash()?;
                 self.name_top("x")?;
@@ -715,16 +785,17 @@ fn emit_body(e: &mut Emitter) -> Result<()> {
     e.emit_indices()?;
     e.emit_fors()?;
 
-    for layer in 0..D {
+    for layer in 0..e.p.d {
         e.emit_layer(layer)?;
     }
 
     e.discard("tree")?;
     e.discard("leaf")?;
 
+    let elements = e.p.sig_elements();
     ensure!(
-        e.next_element == SIG_ELEMENTS,
-        "verifier consumed {} of {SIG_ELEMENTS} signature elements",
+        e.next_element == elements,
+        "verifier consumed {} of {elements} signature elements",
         e.next_element
     );
     ensure!(e.pending == 0, "{} sliced elements were never consumed", e.pending);

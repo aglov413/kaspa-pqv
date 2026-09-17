@@ -4,6 +4,7 @@
 //! kaspa-vault addresses  (--mnemonic <words> | --key <xprv|seed|privkey>) [options]
 //! kaspa-vault balance    (--mnemonic <words> | --key <xprv|seed|privkey>) [options]
 //! kaspa-vault spend       --to <address> --amount <sompi> [--fee N] [--yes] [--dry-run]
+//! kaspa-vault slh-address [--set 128s|128-24|128-24d2]
 //! kaspa-vault init-env
 //! kaspa-vault info
 //!
@@ -36,6 +37,8 @@ const DEFAULT_ADDRESS_COUNT: u32 = 8;
 
 pub struct Args {
     pub command: String,
+    /// Which SLH-DSA parameter set the `slh-*` commands operate on.
+    pub set: Option<String>,
     pub mnemonic: Option<String>,
     pub key: Option<String>,
     pub key_index: Option<u32>,
@@ -56,6 +59,7 @@ fn parse_args() -> Result<Args> {
 
     let mut parsed = Args {
         command,
+        set: None,
         mnemonic: None,
         key: None,
         key_index: None,
@@ -73,6 +77,7 @@ fn parse_args() -> Result<Args> {
     while let Some(flag) = args.next() {
         let mut value = || args.next().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
+            "--set" => parsed.set = Some(value()?),
             "--mnemonic" => parsed.mnemonic = Some(value()?),
             "--key" => parsed.key = Some(value()?),
             "--key-index" => parsed.key_index = Some(value()?.parse().context("--key-index")?),
@@ -109,17 +114,33 @@ pub struct Resolved {
 
 /// Which environment variables hold key material for a scheme.
 ///
-/// A scheme-specific variable wins if it is set; otherwise both schemes fall
+/// A scheme-specific variable wins if it is set; otherwise every scheme falls
 /// back to the shared pair, which is the intended production shape — one
-/// mnemonic, one backup, every scheme derived from it.
+/// mnemonic, one backup, every scheme derived from it. The SLH-specific pair
+/// covers all three SLH-DSA parameter sets, which is correct because the
+/// `scheme'` path level already separates them.
 fn key_vars(scheme: Scheme, env: &EnvFile) -> (&'static str, &'static str) {
-    match scheme {
-        Scheme::SlhDsaSha2_128s
-            if env.get(ENV_MNEMONIC_SLH).is_some() || env.get(ENV_KEY_SLH).is_some() =>
-        {
-            (ENV_MNEMONIC_SLH, ENV_KEY_SLH)
-        }
-        _ => (ENV_MNEMONIC, ENV_KEY),
+    let is_slh = !matches!(scheme, Scheme::LmsSha256);
+    if is_slh && (env.get(ENV_MNEMONIC_SLH).is_some() || env.get(ENV_KEY_SLH).is_some()) {
+        return (ENV_MNEMONIC_SLH, ENV_KEY_SLH);
+    }
+    (ENV_MNEMONIC, ENV_KEY)
+}
+
+/// Resolve `--set` to a scheme.
+///
+/// Defaults to `128s`, the only standardised one. The names are the short
+/// forms of the parameter set names, so `--set 128-24` and
+/// `SLH-DSA-SHA2-128-24` are visibly the same thing.
+fn slh_scheme(args: &Args) -> Result<Scheme> {
+    match args.set.as_deref().unwrap_or("128s") {
+        "128s" => Ok(Scheme::SlhDsaSha2_128s),
+        "128-24" => Ok(Scheme::SlhDsaSha2_128_24),
+        "128-24d2" => Ok(Scheme::SlhDsaSha2_128_24D2),
+        other => bail!(
+            "unknown parameter set {other:?}. Use 128s (FIPS 205), 128-24 (SP 800-230 ipd) \
+             or 128-24d2 (proposed, not standardised)."
+        ),
     }
 }
 
@@ -207,15 +228,45 @@ fn open_vault(resolved: &Resolved) -> Result<Vault> {
 fn cmd_info() {
     println!("Kaspa post-quantum vault");
     println!();
+    println!("  address type       P2SH (indistinguishable on-chain from any other P2SH)");
+    println!();
+    println!("  stateful scheme — the `addresses`, `balance` and `spend` commands");
     println!("  signature scheme   LMS_SHA256_M32_H15 / LMOTS_SHA256_N32_W2");
     println!("                     RFC 8554, NIST SP 800-208");
     println!("  one-time keys      {} per vault", PARAMS.leaf_count());
     println!("  warning threshold  {LEAF_WARNING_THRESHOLD} leaves used");
     println!("  derivation         {}", vault_path(Scheme::LmsSha256, 0, 0));
-    println!("  address type       P2SH (indistinguishable on-chain from any other P2SH)");
     println!();
     println!("  Each leaf signs exactly once. Spending advances the vault to the next");
     println!("  leaf, so the live leaf is whichever address holds coins.");
+    println!();
+    println!("  stateless schemes — the `slh-*` commands, chosen with --set");
+    println!("  {:<10} {:<24} {:>10} {:>10}  standard", "--set", "parameter set", "signature", "script");
+    for (scheme, set) in slh_wallet::SLH_SCHEMES {
+        let short = set.name.trim_start_matches("SLH-DSA-SHA2-");
+        println!(
+            "  {:<10} {:<24} {:>8} B {:>8} B  {}",
+            short,
+            set.name,
+            set.sig_len(),
+            // The script is a pure function of the set and the spend shape, so
+            // it can be sized here without deriving a key — which matters,
+            // because one of these takes a hundred seconds to derive.
+            slh_script::build_vault_script(
+                &slh_script::PublicKey { seed: [0; 16], root: [0; 16] },
+                &slh_script::BlobPlan::for_params(set),
+                slh_wallet::CANONICAL_OUTPUT_COUNT,
+            )
+            .map(|v| v.script.len())
+            .unwrap_or(0),
+            set.source
+        );
+        let _ = scheme;
+    }
+    println!();
+    println!("  One address, reusable, signed as many times as you like. The two 2^24");
+    println!("  sets halve the signature by accepting a limit no vault can reach.");
+    println!("  Only 128s is standardised — the others are a draft and a proposal.");
 }
 
 fn cmd_addresses(args: &Args, env: &EnvFile) -> Result<()> {
@@ -360,7 +411,7 @@ fn usage() {
     eprintln!("commands:");
     eprintln!("  info                    scheme and parameter summary
   artifacts               every value an address depends on, for build verification
-  slh-address             SLH-DSA vault address (stateless scheme)
+  slh-address             SLH-DSA vault address (stateless scheme; see --set)
   slh-balance             what the SLH-DSA vault holds
   slh-spend               spend from the SLH-DSA vault");
     eprintln!("  init-env                write a .env template (mode 600)");
@@ -380,6 +431,12 @@ fn usage() {
     eprintln!("options:");
     eprintln!("  --env-file PATH which .env to read (default ./.env)");
     eprintln!("  --key-index N   which vault under the seed (default 0)");
+    eprintln!("  --set NAME      SLH-DSA parameter set for the slh-* commands:");
+    eprintln!("                    128s      FIPS 205, 2^64 signatures  (default)");
+    eprintln!("                    128-24    SP 800-230 ipd, 2^24 signatures, half the");
+    eprintln!("                              signature — a key takes ~100 s to derive");
+    eprintln!("                    128-24d2  as above with d=2: fast to sign, 1360 more");
+    eprintln!("                              signature bytes. NOT a standardised set.");
     eprintln!();
     eprintln!("spend options:");
     eprintln!("  --to ADDRESS    destination (required)");
@@ -414,19 +471,22 @@ async fn main() -> Result<()> {
         "balance" => cmd_balance(&args, &env).await?,
         "spend" => cmd_spend(&args, &env).await?,
         "slh-address" => {
-            let resolved = resolve(&args, &env, Scheme::SlhDsaSha2_128s)?;
+            let scheme = slh_scheme(&args)?;
+            let resolved = resolve(&args, &env, scheme)?;
             let prefix = prefix_for(&resolved.network)?;
-            slh_cmd::cmd_address(&resolved, prefix)?
+            slh_cmd::cmd_address(&resolved, scheme, prefix)?
         }
         "slh-balance" => {
-            let resolved = resolve(&args, &env, Scheme::SlhDsaSha2_128s)?;
+            let scheme = slh_scheme(&args)?;
+            let resolved = resolve(&args, &env, scheme)?;
             let prefix = prefix_for(&resolved.network)?;
-            slh_cmd::cmd_balance(&resolved, prefix).await?
+            slh_cmd::cmd_balance(&resolved, scheme, prefix).await?
         }
         "slh-spend" => {
-            let resolved = resolve(&args, &env, Scheme::SlhDsaSha2_128s)?;
+            let scheme = slh_scheme(&args)?;
+            let resolved = resolve(&args, &env, scheme)?;
             let prefix = prefix_for(&resolved.network)?;
-            slh_cmd::cmd_spend(&args, &resolved, prefix).await?
+            slh_cmd::cmd_spend(&args, &resolved, scheme, prefix).await?
         }
         "help" | "--help" | "-h" => usage(),
         other => {
