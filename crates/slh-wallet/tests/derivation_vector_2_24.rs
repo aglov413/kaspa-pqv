@@ -130,18 +130,23 @@ fn check(scheme: Scheme, set: &'static SlhParams, path: &str, f: &Frozen) {
     }
 }
 
+/// `xi`, `PK.seed` and `PK.root` survived the `k = 11` to `k = 15` change
+/// unchanged, and that is not an oversight: `a` and `k` address FORS, which
+/// sits *below* the hypertree, so the top tree's root does not depend on them.
+/// Changing FORS moves the script and the address while leaving the key
+/// material exactly where it was.
 const D2: Frozen = Frozen {
     xi: "c441d0b0ac818c7f75c7f711339a4d29070a4b591bd99813a8ae49fa7b2ceb7c",
     pk_seed: "98e47af8ecf1933318939f6c50d61ea2",
     pk_root: "02e319df89979b953add083a06adeb1e",
-    script_len: 29_197,
-    blobs: 82,
-    script_hash: "768c79ffa0c48e33022842cd0be29261a64fd7f00161e5c198ca976483a2a103",
-    testnet: "kaspatest:pqzcsvunare2zxyj4s7esz3apuwfkddycyt3z86al3y60gnkxtaz7c6scd2yk",
-    mainnet: "kaspa:pqzcsvunare2zxyj4s7esz3apuwfkddycyt3z86al3y60gnkxtaz7eukrz54j",
+    script_len: 33_664,
+    blobs: 97,
+    script_hash: "bf739daf490a4f457a1455a443cca84714f99544be5c87643a5cfc4a04a232fa",
+    testnet: "kaspatest:ppedp20n86z392h2ym255zl2nrj5g5pzakqhrxdrzztu8k4getfm7qjckz9u7",
+    mainnet: "kaspa:ppedp20n86z392h2ym255zl2nrj5g5pzakqhrxdrzztu8k4getfm7p57ddmd6",
     neighbours: [
-        "kaspatest:pzx3uvf7zhs3zuhxsttlahrunkaqgvd4wfk6flge6c9kjmhvumxnv0tts2aar",
-        "kaspatest:pz3cllytpuj5ual44mxe2lxzrv3z4gxkgzsr0ffwpx3sxjqrrteagyzfhr87v",
+        "kaspatest:ppzp0fk39zcyw0jjdycf4u64whwaqljvz9py3qdfx6a3an780ewgqdsuqsv86",
+        "kaspatest:pzn9lu8anls0qxvuezncl3tknhvwuz0hez0anhqvhuacpx5tu5v6wy8zrck5c",
     ],
 };
 

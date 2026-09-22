@@ -13,8 +13,8 @@ Four schemes are implemented and **all four have spent on testnet-10**.
 | signatures per key | 2^64 | 2^24 | 2^24 | 2^15 |
 | addresses per vault | **1** | **1** | **1** | 32,768 |
 | safe to sign off-chain | **yes** | **yes** | **yes** | no |
-| signature | 7,856 B | **3,856 B** | 5,216 B | 4,780 B |
-| redeem script | 89,235 B | **21,752 B** | 29,197 B | 19,717 B |
+| signature | 7,856 B | **3,856 B** | 6,176 B | 4,780 B |
+| redeem script | 89,235 B | **21,752 B** | 33,664 B | 19,717 B |
 | key generation | 0.08 s | ~100 s | 0.09 s | 5.96 s |
 | signing | 0.52 s | 23 s | **0.20 s** | 0.02 s |
 
@@ -38,7 +38,7 @@ vault is. On a chain that charges for bytes, that is the trade worth having.
 **`128-24d2` is not a standard.** It appears in no NIST document. It is carried
 here because `128-24`'s `d = 1` puts a single XMSS tree of 4,194,304 leaves in
 front of every signature — about 100 seconds to generate a key and 23 to sign,
-on six cores — and `d = 2` buys that back almost entirely for 1,360 more
+on six cores — and `d = 2` buys that back almost entirely for 2,320 more
 signature bytes. Whether that is a good trade is what measuring it is for. It has none of
 the other two sets' security analysis behind it and should never be described as
 standardised.
@@ -92,31 +92,33 @@ Testnet-10:
 ```
 SLH-DSA-128s      4f4f96c2494d741b3cc0f30bde3a15faa956bbdfeed60ba184cbef185dc2cd6c   first spend
 SLH-DSA-128s      25a8dc25735ec649f3d99379f969c5c7761d8546514c783050b34c5ad6c8d3d4   spends its own change
-SLH-DSA-128s      3197116e1b8008111b94fddc8595d35d0a79676dbbfb3696dc231427d6a60c54   funds the 128-24d2 vault
-SLH-DSA-128-24d2  4a83c79e6cfa8b058bfd3dc37e5ba0ad4f2518e3ba5fb8b5aafb6e652bc10969   first spend
-SLH-DSA-128-24d2  bf6c80e79ca9c6443420f49fa75f53864754a17f00289bf1c10f0c7311d4a3c9   spends its own change
-SLH-DSA-128-24d2  da02dcc107c180f756acaba1fe18d4bcdf9f1b8c60a08b167a202ad213d6b04d   funds the 128-24 vault
+SLH-DSA-128s      3197116e1b8008111b94fddc8595d35d0a79676dbbfb3696dc231427d6a60c54   funds a 128-24d2 vault
 SLH-DSA-128-24    7d74a4308bf2a7379fb3602ec947722eb890ba83f8e63347381aa7f7c7e89e45   first spend
 SLH-DSA-128-24    586e6e019603a3eead40b924da31359146129af924c553e0f738ef86263cfe08   spends its own change
+SLH-DSA-128-24d2  1f890510e29a44d22cf5d29b60920c4fea7ce292a4eb752cf5dbc0d93c089df0   first spend
+SLH-DSA-128-24d2  0aaaf1768c15515bfe20bad6a2324eeda4aac83bf0e4f94378a8e137f25af826   spends its own change
+SLH-DSA-128-24d2  18878fec837b47fec47140eb841f82c2d52b1451df41cc9a546ef0042f78dabe   and its change again
 LMS               9df246be429549dfd7635f2c95c6fed580f491632db9ee5777a9fab22fce755a   leaf 0 -> 1
 LMS               7dd3834583a9b501f969420b4aff1b7ef6fe51b8151463ba30672fa2671e0a00   leaf 1 -> 2
 ```
 
-Each stateless scheme funded the next, so the chain of custody runs
-`128s -> 128-24d2 -> 128-24` entirely through post-quantum vaults.
+`128-24d2` spent three times under an earlier `k = 11` FORS choice as well —
+`4a83c79e…`, `bf6c80e7…`, `da02dcc1…` — which a security review replaced. Those
+describe a set this build no longer emits and are noted only so the history is
+not silently dropped.
 
 **The second transaction of each stateless pair is the one that matters.** It
 spends the first one's change with the same key, from the same address, over a
 different message — the operation that exposes an LMS one-time key. Nothing was
 consulted or recorded between the two, and the address did not move. The LMS
-rows below them walk `leaf 0 -> 1 -> 2`, burning a one-time key per spend and
+rows walk `leaf 0 -> 1 -> 2` instead, burning a one-time key per spend and
 leaving dead addresses behind. That contrast is the whole argument.
 
 **The measured cost matched the lab.** The size, mass and compute budget a node
 accepted are the numbers the test suite reported against a fabricated UTXO —
-for `128-24d2`, to within one transaction byte and two units of normalized
-mass ([Measured costs](#measured-costs)). Nothing needed revising once real
-coins were involved.
+for `128-24`, to within one transaction byte and two units of normalized mass
+([Measured costs](#measured-costs)). Nothing needed revising once real coins
+were involved.
 
 **`SLH-DSA-SHA2-128-24` costs less to verify than LMS.** Measured side by side
 in one process — same spend shape, same engine, same mass parameters — it is
@@ -298,7 +300,7 @@ hypertree   d layers x (len Winternitz chains + h'-node path)
            FORS            hypertree              signature
 128s       14 x (1 + 12)   7 x (35 chains + 9)    7,856 B
 128-24      6 x (1 + 24)   1 x (68 chains + 22)   3,856 B
-128-24d2   11 x (1 + 14)   2 x (68 chains + 12)   5,216 B
+128-24d2   15 x (1 + 14)   2 x (68 chains + 12)   6,176 B
 ```
 
 The hypertree position is derived from the message, so nothing has to be
@@ -369,32 +371,36 @@ parameters. Every number is produced by Kaspa's own code
 | LMS h=15 w=2 | yes | 2^15 | 19,717 | 24,891 | 375,226 | 49,782 | 10 | 0.0498 |
 | SLH-DSA-128s | no | 2^64 | 89,235 | 97,473 | 1,285,456 | 194,946 | 2 | 0.1949 |
 | **SLH-DSA-128-24** | no | 2^24 | **21,752** | **25,926** | **266,270** | 51,852 | 9 | **0.0519** |
-| SLH-DSA-128-24d2 | no | 2^24 | 29,197 | 34,752 | 403,439 | 69,504 | 7 | 0.0695 |
+| SLH-DSA-128-24d2 | no | 2^24 | 33,664 | 40,194 | 455,267 | 80,388 | 6 | 0.0804 |
 
 **The result worth stating plainly: `SLH-DSA-SHA2-128-24` costs 1.04x LMS's
 transaction bytes and is *cheaper to verify* than LMS.** A stateless
 post-quantum vault at a stateful vault's price. The statefulness problem that
 this design spent a rewrite managing costs, at these parameters, about 4%.
 
-**The harness predicted the chain to within a byte, for both new sets.** Each
-has since spent twice on testnet-10, and the numbers a node accepted are the
-numbers the table above reports against a fabricated UTXO:
+**The harness predicted the chain to within a byte, for both new sets:**
 
-| | `128-24` harness | `128-24` chain | `128-24d2` harness | `128-24d2` chain |
+| | `128-24` harness | chain | `128-24d2` harness | chain |
 |---|--:|--:|--:|--:|
-| transaction | 25,926 B | 25,925 B | 34,752 B | 34,751 B |
-| script units | 266,270 | 267,546 / 267,553 | 403,439 | 402,185 / 403,473 |
-| compute budget | 29 | 29 | 43 | 43 |
-| normalized mass | 51,852 | 51,850 | 69,504 | 69,502 |
-| fee floor | 0.0519 | 0.0519 | 0.0695 | 0.0695 |
+| transaction | 25,926 B | 25,925 B | 40,194 B | 40,193 B |
+| normalized mass | 51,852 | 51,850 | 80,388 | 80,386 |
+| fee floor | 0.0519 | 0.0519 | 0.0804 | 0.0804 |
+| script units | 266,270 | 267,546 / 267,553 | 455,267 | 454,056 – 473,019 |
+| compute budget | 29 | 29 | 48 | **48 / 50 / 48** |
 
-Each pair of unit counts is two spends of one key, the second spending the
-first's change. They differ because a Winternitz chain runs from its message
-digit — which is why the budget has to come from the signature actually being
-broadcast — and both fit one budget, which is `BUDGET_MARGIN_UNITS` doing its
-job. The `128s` round moved 1,330,069 → 1,393,475 → 1,393,705 and needed the
-budget to go 136 → 142; `w = 4` emits 204 or 408 chain steps instead of 3,675,
-so the band is proportionally far narrower.
+Each set's unit counts are consecutive spends of one key, each spending the
+previous one's change. They differ because a Winternitz chain runs from its
+message digit — which is why the budget has to come from the signature actually
+being broadcast, not from the parameter set.
+
+**`128-24d2` is the one where that actually bit.** Its three spends spanned
+18,963 units, 4.2%, and the declared budget moved 48 → 50 → 48. Earlier rounds
+made the narrower band look like a property of `w = 4`: `128s` moved 136 → 142
+across three spends, while `128-24` held 29 and `128-24d2` at `k = 11` held 43.
+Those were two-sample observations. With 136 chains of up to 3 steps the
+standard deviation is a few thousand units either way, so a tight pair was luck
+rather than structure, and the wider spread here is the same distribution seen
+three times instead of twice.
 
 The `128s` and LMS rows have their own confirmed figures — 97,472 B at 0.2339
 TKAS and 24,890 B at 0.0597 TKAS — differing from the harness by
@@ -416,7 +422,7 @@ optimisation target is script *bytes*, not script units.
 23 s to sign, against 0.08 s and 0.52 s for `128s`. A confirmed spend took
 2m05s wall clock end to end. That is `d = 1` — one XMSS tree of 4,194,304
 leaves, rebuilt for every signature. `128-24d2` is the same signature limit with
-`d = 2`, which buys that back for 8,800 more transaction bytes.
+`d = 2`, which buys that back for 14,268 more transaction bytes.
 
 Timings are wall clock from the CLI on a six-core i5-9600K **without SHA-NI**;
 a CPU with the SHA extensions would be several times faster, and the current
@@ -484,9 +490,9 @@ wrong set fails against the script, after the coins have already been sent.
 Record the set alongside the address — `kaspa-vault slh-address --set …` prints
 both.
 
-**Both 2^24 sets have spent on testnet-10** — twice each, the second spending
-the first's change. What they have not had is review: see the two paragraphs
-above this one.
+**Both 2^24 sets have spent on testnet-10**, each spending its own change —
+`128-24` twice, `128-24d2` three times. What neither has had is review: see the
+two paragraphs above this one.
 
 **`SLH-DSA-SHA2-128-24` is a draft parameter set and `SLH-DSA-SHA2-128-24d2` is
 not a parameter set at all.** SP 800-230 is an initial public draft and its
@@ -494,6 +500,15 @@ numbers can change before it is final; if they do, `128-24` here becomes a set
 NIST does not define, and addresses funded under it stay spendable only by this
 code. `128-24d2` was never anyone's proposal. Neither carries the standing
 `128s` has, and only `128s` should hold anything that matters.
+
+**What `128-24d2` does have is arithmetic, not review.** Its FORS forgery bound
+has been computed twice, independently, each derivation first validated against
+SP 800-230's own published figure for `128-24`. Those bounds put it at or above
+**SP 800-230's category-1 variant** — 179.64 bits against 128.63 at the same
+2^24 design point, and a 128-bit crossing at 2^29.25 signatures against roughly
+2^24.1 ([spec §8.5.1](docs/vault-spec.md#851-computed-bounds)). That is one term
+of a security argument, not a proof, and nobody with authority over the standard
+has looked at this set.
 
 **LMS is stateful.** Losing the spend journal *and* signing again from the same
 address exposes a one-time key. The pinned-leaf design makes state recoverable

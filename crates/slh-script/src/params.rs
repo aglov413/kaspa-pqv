@@ -8,9 +8,9 @@
 //! | source | FIPS 205 Table 2 | SP 800-230 ipd Table 1 | proposed here |
 //! | signatures per key | 2^64 | 2^24 | 2^24 |
 //! | `h` / `d` / `h'` | 63 / 7 / 9 | 22 / 1 / 22 | 24 / 2 / 12 |
-//! | `a` / `k` | 12 / 14 | 24 / 6 | 14 / 11 |
+//! | `a` / `k` | 12 / 14 | 24 / 6 | 14 / 15 |
 //! | `lg(w)` | 4 | 2 | 2 |
-//! | signature | 7856 B | **3856 B** | 5216 B |
+//! | signature | 7856 B | **3856 B** | 6176 B |
 //!
 //! # Why a 2^24 signature limit is free for a vault
 //!
@@ -155,9 +155,31 @@ pub static SHA2_128_24: Params = Params {
 /// cost brought back to something a cold signer can pay.
 ///
 /// `d = 2` over `h' = 12` is two trees of 4096 leaves instead of one of four
-/// million, which is three orders of magnitude off the signing cost, for 1360
-/// bytes of signature. Whether that is a good trade is what measuring it is
-/// for.
+/// million. That takes key generation from about 100 seconds to 0.09, and
+/// signing from 23 seconds to 0.20 — roughly 400x for a fresh key, and two
+/// orders of magnitude for each signature after it.
+///
+/// # Why `k = 15` and not the draft's `k = 6`
+///
+/// FORS work is `k * 2^a` and FORS security is driven by `k * a`, so the two
+/// parameters are not interchangeable: `a` is exponential in signing cost and
+/// `k` is linear. Raising `k` buys security almost for free in time, and pays
+/// for it in signature bytes — one more auth path per tree.
+///
+/// Both endpoints were measured rather than argued. The draft's `(a=24, k=6)`
+/// was tried and reverted: it signs in **21.9 s**, against 0.199 s here, which
+/// is the draft's own signing cost put straight back and the one thing this set
+/// exists to avoid. Holding `a = 14` and moving `k` from 11 to 15 instead costs
+/// 10 ms of signing and 960 signature bytes, and takes the point at which this
+/// set falls below 128 bits out to **2^29.25** signatures — about 638 million,
+/// some 38x the stated limit. That figure is a directly computed crossing, not
+/// an interpolation between the design point and the 100-bit crossing: the
+/// degradation curve is convex, so a chord between two points on it undershoots
+/// by about half a doubling.
+///
+/// `k = 15` therefore addresses the one real deficit a security review found in
+/// the earlier `k = 11`: not the margin at the design point, which already
+/// exceeded the draft's, but how gracefully it degrades past it.
 ///
 /// This set appears in no standards document. It is implemented, tested and
 /// measured on exactly the same footing as the other two so the comparison is
@@ -169,13 +191,15 @@ pub static SHA2_128_24_D2: Params = Params {
     d: 2,
     hp: 12,
     a: 14,
-    k: 11,
+    k: 15,
     lgw: 2,
-    m: 24,
+    m: 31,
     // Targets the same limit as the draft set. With `h = 24` that is one
     // signature per hypertree position, where `128s` allows two and the draft
-    // set four — more conservative on reuse than either, which is an
-    // observation and not an analysis. Nobody has analysed this set.
+    // set four — fewer expected FORS-instance collisions than either, which is
+    // where this set's margin over the draft comes from. That is an observation
+    // about a published formula, not an analysis of this set: nobody has
+    // reviewed it.
     sig_limit_log2: 24,
     source: "none — proposed here, unanalysed",
 };
@@ -319,7 +343,14 @@ mod tests {
 
         // Derived, since no table states it.
         let p = &SHA2_128_24_D2;
-        assert_eq!(p.sig_len(), 5216);
+        assert_eq!(p.sig_len(), 6176);
+
+        // `m` must still fit one MGF1-SHA-256 block. `k = 15` puts it at 31 of
+        // the 32 available bytes, so this set is one FORS tree away from
+        // needing a second block in `H_msg` — which is an emitter change, not
+        // a constant change. Anything that raises `k` or `a` further has to
+        // deal with that first.
+        assert_eq!(p.m, 31);
     }
 
     /// `m` is stated by both documents *and* derivable from the index widths.

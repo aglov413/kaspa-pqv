@@ -364,12 +364,12 @@ serves all three; they differ only in the constants below.
 | signature limit | 2^64 | 2^24 | 2^24 |
 | `n` | 16 | 16 | 16 |
 | `h` / `d` / `h'` | 63 / 7 / 9 | 22 / 1 / 22 | 24 / 2 / 12 |
-| `a` / `k` | 12 / 14 | 24 / 6 | 14 / 11 |
+| `a` / `k` | 12 / 14 | 24 / 6 | 14 / 15 |
 | `lg_w` / `w` | 4 / 16 | 2 / 4 | 2 / 4 |
 | `len1` / `len2` / `len` | 32 / 3 / 35 | 64 / 4 / 68 | 64 / 4 / 68 |
-| `m` | 30 | 21 | 24 |
+| `m` | 30 | 21 | 31 |
 | public key | 32 bytes | 32 bytes | 32 bytes |
-| signature | 7,856 B (491 × 16) | 3,856 B (241 × 16) | 5,216 B (326 × 16) |
+| signature | 7,856 B (491 × 16) | 3,856 B (241 × 16) | 6,176 B (386 × 16) |
 
 Every derived length is computed from FIPS 205 §11's formulas rather than
 copied from a table, and checked against the two published tables
@@ -399,7 +399,7 @@ H_msg     2                              (two SHA-256 calls)
 
 128s      d=7,  h'=9,  a=12, k=14, w=16   183 + 3,745 + 2 = 3,930
 128-24    d=1,  h'=22, a=24, k=6,  w=4    151 +   227 + 2 =   380
-128-24d2  d=2,  h'=12, a=14, k=11, w=4    166 +   434 + 2 =   602
+128-24d2  d=2,  h'=12, a=14, k=15, w=4    226 +   434 + 2 =   662
 128f      d=22, h'=3,  a=6,  k=33, w=16   232 + 11,638 + 2 = 11,872
 ```
 
@@ -427,8 +427,8 @@ hypertree layer, each `len` chains of `w - 1` hashes:
 
 Measured on six cores with the constant first hash block precomputed once per
 key. `128-24`'s column is `d = 1` doing exactly what `d = 1` does, and it is the
-reason `128-24d2` is carried alongside it: same signature limit, same `w`, three
-orders of magnitude less signing, for 1,360 more signature bytes.
+reason `128-24d2` is carried alongside it: same signature limit, same `w`, two
+orders of magnitude less signing, for 2,320 more signature bytes.
 
 ### 6.2 Compressed ADRS
 
@@ -465,7 +465,7 @@ addresses under `OpNum2Bin`'s sign-magnitude encoding:
 |---|--:|--:|
 | `128s` | 3 bytes (`k·2^a` = 57,344) | 2 bytes (`2^h'` = 512) |
 | `128-24` | 4 bytes (100,663,296) | 3 bytes (4,194,304) |
-| `128-24d2` | 3 bytes (180,224) | 2 bytes (4,096) |
+| `128-24d2` | 3 bytes (245,760) | 2 bytes (4,096) |
 
 The remaining bytes of each 4-byte word are literal zeros. A width one byte too
 narrow produces a script that works for small indices and fails for large ones —
@@ -484,7 +484,7 @@ are not once the verifier's working frame and the digest are on the stack with
 them. Three elements of headroom is not a margin to build an address on.
 
 The signature is pushed as blobs of 4 elements (`BLOB_ELEMS = 4`), in signature
-order: **123 blobs** for `128s`, **61** for `128-24`, **82** for `128-24d2`.
+order: **123 blobs** for `128s`, **61** for `128-24`, **97** for `128-24d2`.
 The verifier's prologue moves them to the alt stack — which reverses them into a
 queue — and slices each blob when reached, pushing its elements back above the
 remaining blobs so they pop in order.
@@ -531,7 +531,7 @@ Per set, that is:
 |---|---|---|
 | `128s` | 14 × (1 + 12) | 7 × (35 chains + 9) |
 | `128-24` | 6 × (1 + 24) | 1 × (68 chains + 22) |
-| `128-24d2` | 11 × (1 + 14) | 2 × (68 chains + 12) |
+| `128-24d2` | 15 × (1 + 14) | 2 × (68 chains + 12) |
 
 `H_msg` for the SHA2 parameter sets is an inner SHA-256 followed by one
 MGF1-SHA-256 block; `m` is 30, 21 or 24 and MGF1 emits 32 per block, so the
@@ -677,9 +677,59 @@ cryptographic strength — it is who has analysed them.**
 - `128-24` comes from SP 800-230, an **initial public draft**. Its security
   analysis is NIST's, and its numbers can change before the document is final.
   If they do, addresses funded under it are spendable only by this code.
-- `128-24d2` has **no** analysis behind it. It is a parameter set stated in this
-  workspace and nowhere else. It is implemented and measured on equal footing so
-  the comparison is real; that is not the same as it being sound.
+- `128-24d2` **has not been reviewed by any standards body**, and should not be
+  described as though it had. What exists instead is arithmetic: the FORS
+  multi-target forgery bound has been computed for it twice, independently, each
+  derivation validated against SP 800-230's own published figure for `128-24`
+  before being trusted ([§8.5.1](#851-computed-bounds)).
+
+  Those bounds put it **at or above SP 800-230's category-1 variant** on every
+  axis compared — 179.64 bits against 128.63 at the same 2^24 design point, a
+  128-bit crossing at 2^29.25 signatures against roughly 2^24.1, and equal or
+  better overuse tolerance at both the 100- and 80-bit thresholds.
+
+  That is a computation of one term in a security argument, not a proof and not
+  a review. It says the FORS parameters are not the weak point; it says nothing
+  about the other terms, and nobody with authority over the standard has looked
+  at this set. Note also that the comparison is to the **category-1** variant
+  only — SP 800-230 also drafts `192-24` and `256-24`, which this set is nowhere
+  near.
+
+#### 8.5.1 Computed bounds
+
+The FORS multi-target forgery bound (Fluhrer & Dang, eprint 2024/018, Eq. 1)
+evaluated at each set's own design point. Two independent derivations agree to
+the digit shown; both reproduce SP 800-230's published 112-bit overuse figure
+for `128-24` (27.25, computed 27.2453) as a calibration check.
+
+| | design point | bits there | falls below 128 bits at |
+|---|--:|--:|--:|
+| `128s` | 2^64 | 133.75 | — (at its limit) |
+| `128-24` | 2^24 | 128.63 | ~2^24.1 |
+| `128-24d2` | 2^24 | **179.64** | **2^29.25** ≈ 638 million |
+
+`128-24d2` degrades from there as: 117.96 bits at 2^30, and around 0 bits at
+2^40 — where forgery is more likely than not. Its crossings past the design
+point are +7.28 doublings to 100 bits and +8.66 to 80 bits.
+
+**The stated 2^24 limit is an operational cap, not the security floor.** It
+matches the hypertree's capacity and is the number to publish; the bound does
+not actually cross 128 bits until roughly 38x further out. The two should not be
+conflated in either direction — the cap is what the set is *sized* for, and
+`128-24`'s own margin above it is essentially nil.
+
+These are **classical forgery-probability bounds** under the standard's `2^-n`
+convention, not "post-quantum bits". A related question is settled by the same
+arithmetic: category 1 is sometimes quoted as requiring ≥143 bits, which cannot
+be the operative floor for this bound, since FIPS 205's own `128s` never exceeds
+133.75. The 143-bit figure belongs to NIST's categorical gate-count argument,
+not to this query-count one.
+
+A constraint on any future re-sweep of `(a, k)`: `m` must stay at or under 32
+bytes, or `H_msg` needs a second MGF1-SHA-256 block, which is an emitter change
+rather than a constant change. At `a = 14` that caps `k` at 16. Several `(a, k)`
+pairs that score better on the bound alone — `(11, 24)` and `(12, 20)` among
+them — are past that wall and are not reachable by this emitter as written.
 
 Both 2^24 sets also carry a limit `128s` does not: **2^24 signatures per key,
 counting every signature, including ones the chain never sees**. For a vault
@@ -745,7 +795,8 @@ nothing about whether the standards process will land where the draft is now.
 to generate a key and 23 to sign, on six cores; a confirmed spend took 2m05s
 wall clock. That is the draft's deliberate
 trade for "sign-once, verify-many", and a vault signer is not a build server.
-`128-24d2` prices the alternative but carries no analysis.
+`128-24d2` prices the alternative, at bounds computed rather than reviewed
+([§8.5](#85-security-level)).
 
 **KIP registration.** `PURPOSE = 101110'` and the `scheme'` assignments are
 chosen, not registered. `Derivation` carries the purpose as a field so two
@@ -764,23 +815,31 @@ derivation.
 
 ### 11.1 Confirmed on-chain
 
-Testnet-10, confirmed spends. All four schemes have spent.
+Testnet-10, confirmed spends.
 
 | | `128s` | `128-24` | `128-24d2` | LMS h=15 w=2 |
 |---|--:|--:|--:|--:|
-| redeem script | 89,235 B | 21,752 B | 29,197 B | 19,717 B |
-| transaction | 97,472 B | 25,925 B | 34,751 B | 24,890 B |
-| script units | 1,330,069 | 267,546 / 267,553 | 402,185 / 403,473 | 373,146 |
-| compute budget | 136 | 29 | 43 | 40 |
-| normalized mass | 194,944 | 51,850 | 69,502 | 49,780 |
-| fee | 0.2339 TKAS | 0.0622 TKAS | 0.0834 TKAS | 0.0597 TKAS |
-| fee floor | 0.1949 TKAS | 0.0519 TKAS | 0.0695 TKAS | 0.0498 TKAS |
-| spends per block | 2 | 9 | 7 | ~10 |
+| redeem script | 89,235 B | 21,752 B | 33,664 B | 19,717 B |
+| transaction | 97,472 B | 25,925 B | 40,193 B | 24,890 B |
+| script units | 1,330,069 | 267,546 / 267,553 | 454,056 – 473,019 | 373,146 |
+| compute budget | 136 → 142 | 29 | 48 / 50 / 48 | 40 |
+| normalized mass | 194,944 | 51,850 | 80,386 | 49,780 |
+| fee | 0.2339 TKAS | 0.0622 TKAS | 0.0965 TKAS | 0.0597 TKAS |
+| fee floor | 0.1949 TKAS | 0.0519 TKAS | 0.0804 TKAS | 0.0498 TKAS |
+| spends per block | 2 | 9 | 6 | ~10 |
 
-Each pair of unit counts is two spends of the **same key**, one spending the
-other's change. Chain length depends on the message digit, so the count moves;
-each pair fits one budget, which is what the margin in `BUDGET_MARGIN_UNITS` is
-for.
+Each set's unit counts are consecutive spends of the **same key**, each spending
+the previous one's change. Chain length depends on the message digit, so the
+count moves — which is why [§8.3](#83-compute-budget) requires the budget to come
+from the signature being broadcast rather than from the parameter set.
+
+**`128-24d2`'s three spends spanned 18,963 units (4.2%) and moved the declared
+budget 48 → 50 → 48.** Earlier rounds suggested `w = 4` gave a much narrower band
+than `128s`'s 136 → 142, since `128-24` held 29 and `128-24d2` held 43 at
+`k = 11`. Those were two-sample observations. With `d·len = 136` chains of up to
+three steps the spread is a few thousand units either way, so a tight pair was
+luck, not structure. `BUDGET_MARGIN_UNITS = 2` absorbed the move here; it is not
+guaranteed to.
 
 `SLH-DSA-SHA2-128-24` is **cheaper to verify than LMS** — 267,546 units against
 373,146 — at 1.04x its transaction bytes. That is a stateless post-quantum
@@ -788,10 +847,16 @@ signature costing about 4% more than a stateful one, on a live chain, with no
 consensus change.
 
 The measured figures agree with §11.2's harness numbers to within one
-transaction byte and two units of normalized mass, for both 2^24 sets. That is
-the claim this workspace is organised around — that a measurement against
-`TxScriptEngine` and `MassCalculator` with a fabricated UTXO is the number a
-node will charge — and it is now checked rather than assumed.
+transaction byte and two units of normalized mass. That is the claim this
+workspace is organised around — that a measurement against `TxScriptEngine` and
+`MassCalculator` with a fabricated UTXO is the number a node will charge — and
+it is now checked rather than assumed.
+
+`128-24d2` also spent three times under an earlier `k = 11` FORS choice, at
+34,751 transaction bytes against 34,752 predicted — the same agreement — before
+a security review replaced that choice with `k = 15`
+([§6.1](#61-parameters)). Those figures describe a set this document no longer
+specifies and are not carried in the table above.
 
 ### 11.2 All four, measured in one process
 
@@ -805,7 +870,7 @@ that row's own signature needs:
 | LMS h=15 w=2 | yes | 2^15 | 19,717 | 24,637 | 24,891 | 375,226 | 49,782 | 10 | 0.0498 |
 | SLH-DSA-SHA2-128s | no | 2^64 | 89,235 | 97,219 | 97,473 | 1,285,456 | 194,946 | 2 | 0.1949 |
 | SLH-DSA-SHA2-128-24 | no | 2^24 | 21,752 | 25,672 | 25,926 | 266,270 | 51,852 | 9 | 0.0519 |
-| SLH-DSA-SHA2-128-24d2 | no | 2^24 | 29,197 | 34,498 | 34,752 | 403,439 | 69,504 | 7 | 0.0695 |
+| SLH-DSA-SHA2-128-24d2 | no | 2^24 | 33,664 | 39,940 | 40,194 | 455,267 | 80,388 | 6 | 0.0804 |
 
 `SLH-DSA-SHA2-128-24` costs **1.04x LMS's transaction bytes and fewer script
 units than LMS** — a stateless scheme at a stateful scheme's price. On this
@@ -840,15 +905,21 @@ the four.
 scheme' = 2   4f4f96c2494d741b3cc0f30bde3a15faa956bbdfeed60ba184cbef185dc2cd6c
 scheme' = 2   25a8dc25735ec649f3d99379f969c5c7761d8546514c783050b34c5ad6c8d3d4   spends the above's change
 scheme' = 2   3197116e1b8008111b94fddc8595d35d0a79676dbbfb3696dc231427d6a60c54   funds a scheme' = 4 vault
-scheme' = 4   4a83c79e6cfa8b058bfd3dc37e5ba0ad4f2518e3ba5fb8b5aafb6e652bc10969
-scheme' = 4   bf6c80e79ca9c6443420f49fa75f53864754a17f00289bf1c10f0c7311d4a3c9   spends the above's change
-scheme' = 4   da02dcc107c180f756acaba1fe18d4bcdf9f1b8c60a08b167a202ad213d6b04d   funds a scheme' = 3 vault
 scheme' = 3   7d74a4308bf2a7379fb3602ec947722eb890ba83f8e63347381aa7f7c7e89e45
 scheme' = 3   586e6e019603a3eead40b924da31359146129af924c553e0f738ef86263cfe08   spends the above's change
+scheme' = 4   1f890510e29a44d22cf5d29b60920c4fea7ce292a4eb752cf5dbc0d93c089df0
+scheme' = 4   0aaaf1768c15515bfe20bad6a2324eeda4aac83bf0e4f94378a8e137f25af826   spends the above's change
+scheme' = 4   18878fec837b47fec47140eb841f82c2d52b1451df41cc9a546ef0042f78dabe   and its change again
 scheme' = 1   9df246be429549dfd7635f2c95c6fed580f491632db9ee5777a9fab22fce755a
 scheme' = 1   7dd3834583a9b501f969420b4aff1b7ef6fe51b8151463ba30672fa2671e0a00
 ```
 
-Each stateless pair is one key signing two different messages from one address,
-the second spending the first's change. Each stateless scheme funded the next,
-so the chain of custody runs `2 -> 4 -> 3` entirely through vault addresses.
+Each stateless run is one key signing several different messages from one
+address, each spending the previous one's change. `scheme' = 4`'s three spends
+are the longest such chain here, and the one where the compute budget moved
+between them ([§11.1](#111-confirmed-on-chain)).
+
+A further three `scheme' = 4` transactions exist under its earlier `k = 11`
+FORS choice — `4a83c79e…`, `bf6c80e7…`, `da02dcc1…`, the last of which funded
+the `scheme' = 3` vault above. They describe a set this document no longer
+specifies.
